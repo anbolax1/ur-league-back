@@ -1,0 +1,68 @@
+name: Deploy backend
+
+# Автодеплой: сборка статического бинаря на раннере → заливка на VPS → рестарт.
+# Миграции БД прогоняются бинарём на старте. Секреты репозитория:
+#   SSH_HOST  — IP/домен VPS (напр. 155.212.133.147)
+#   SSH_USER  — admin2
+#   SSH_KEY   — приватный deploy-ключ (целиком, с BEGIN/END)
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: ur-deploy-backend
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Check formatting (gofmt)
+        run: |
+          unformatted=$(gofmt -l .)
+          if [ -n "$unformatted" ]; then
+            echo "Не отформатировано (запусти 'gofmt -w .'):"; echo "$unformatted"; exit 1
+          fi
+
+      - name: Vet
+        run: go vet ./...
+
+      - name: Test
+        run: go test ./...
+
+      - name: Build linux binary
+        run: GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o server-linux.new ./cmd/server
+
+      - name: Deploy over SSH (migrations run on startup)
+        env:
+          SSH_KEY: ${{ secrets.SSH_KEY }}
+          SSH_HOST: ${{ secrets.SSH_HOST }}
+          SSH_USER: ${{ secrets.SSH_USER }}
+        run: |
+          set -e
+          mkdir -p ~/.ssh
+          printf '%s\n' "$SSH_KEY" | tr -d '\r' > ~/.ssh/id
+          chmod 600 ~/.ssh/id
+          ssh-keyscan -H "$SSH_HOST" >> ~/.ssh/known_hosts 2>/dev/null
+          echo "deploy key fingerprint: $(ssh-keygen -yf ~/.ssh/id | awk '{print $1" "substr($2,1,24)"..."}')"
+          SSH="ssh -i ~/.ssh/id -o StrictHostKeyChecking=accept-new"
+          scp -i ~/.ssh/id -o StrictHostKeyChecking=accept-new server-linux.new "$SSH_USER@$SSH_HOST:ur-back/"
+          $SSH "$SSH_USER@$SSH_HOST" '
+            set -e
+            export XDG_RUNTIME_DIR=/run/user/$(id -u)
+            chmod +x ~/ur-back/server-linux.new
+            mv -f ~/ur-back/server-linux.new ~/ur-back/server-linux
+            systemctl --user restart ur-back
+            sleep 2
+            curl -fsS localhost:8090/api/health
+            echo
+            journalctl --user -u ur-back -n 10 --no-pager | grep -iE "goose|migrat|version" || true
+          '

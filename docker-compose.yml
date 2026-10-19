@@ -1,0 +1,24 @@
+# Своё имя проекта: папка называется backend, как у GOARC, и без имени compose
+# принял бы базу лиги за базу GOARC и пересоздал бы её контейнер.
+name: ur-league
+
+services:
+  db:
+    image: postgres:16-alpine
+    container_name: ur_db
+    environment:
+      POSTGRES_USER: ur
+      POSTGRES_PASSWORD: ur
+      POSTGRES_DB: ur_league
+    ports:
+      - "5434:5432"   # 5434 на хосте: 5433 занят базой GOARC
+    volumes:
+      - ur_pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ur"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+volumes:
+  ur_pgdata:
