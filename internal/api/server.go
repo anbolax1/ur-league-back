@@ -92,7 +92,6 @@ func (s *Server) Router() http.Handler {
 		r.Get("/ws/overlay", s.handleOverlayWS)
 		r.Get("/highlights", s.handleListHighlights)
 		r.Get("/media/*", s.handleServeMedia)
-		r.Get("/site", s.handleGetSite)
 		r.Get("/news", s.handleListNews)
 		r.Get("/news/{id}", s.handleGetNews)
 
@@ -165,9 +164,6 @@ func (s *Server) Router() http.Handler {
 			r.Post("/seasons", s.handleStartSeason)
 			r.Patch("/seasons/{id}", s.handleUpdateSeason)
 			r.Delete("/seasons/{id}", s.handleDeleteSeason)
-
-			// Дизайн сайта для всех посетителей: прежний или новый.
-			r.Put("/site/design", s.handleSetSiteDesign)
 
 			// Новости лиги: черновики, публикация по дате, картинка.
 			r.Get("/news/all", s.handleListAllNews)
