@@ -25,8 +25,7 @@ func TestBuildRecap(t *testing.T) {
 					{number: 1, mapCode: "dam", played: true, entries: true, points: [2]int{5, 2}, knocks: [2]int{1, 0},
 						tasks: []recapRawTask{{side: 1, name: "Т", category: "task", doneBy: 1}, {side: 0, name: "П", category: "protocol", doneBy: -1}}},
 					{number: 2, mapCode: "spaceport", played: true, entries: true, points: [2]int{0, 7}, knocks: [2]int{0, 2}},
-				},
-				veto: []recapRawVeto{{"ban", "dam"}, {"pick", "spaceport"}}},
+				}},
 			{id: "m3", at: at(20, 15), mult: 2, games: 2, winner: 0, users: [2]string{"b", "g"},
 				rounds: []recapRawRound{{number: 1, mapCode: "spaceport", played: true}}},
 		},
@@ -85,7 +84,7 @@ func TestBuildRecap(t *testing.T) {
 		len(r.Tasks.Doers) != 1 || r.Tasks.Doers[0].Player != gamma {
 		t.Errorf("задания: %+v", r.Tasks)
 	}
-	if r.Maps[0].Ban != 1 || r.Maps[1].Pick != 1 || r.Maps[0].Rounds != 1 || r.Maps[1].Rounds != 1 || r.Summary.Vetoed != 1 {
+	if r.Maps[0].Rounds != 1 || r.Maps[1].Rounds != 1 {
 		t.Errorf("карты: %+v", r.Maps)
 	}
 	if r.BestKnock == nil || r.BestKnock.Player != gamma || r.BestKnock.Knocks != 2 {

@@ -13,12 +13,8 @@ import (
 	"github.com/ur-league/backend/internal/models"
 )
 
-var (
-	// ErrLiveMatchExists - уже идёт другой матч: новый не создаём, пока старый не завершён или не отменён.
-	ErrLiveMatchExists = errors.New("уже идёт другой матч")
-	// ErrNoMap - у раунда нет карты: сначала пики-баны.
-	ErrNoMap = errors.New("у раунда нет карты")
-)
+// ErrLiveMatchExists - уже идёт другой матч: новый не создаём, пока старый не завершён или не отменён.
+var ErrLiveMatchExists = errors.New("уже идёт другой матч")
 
 // MatchSide - сторона нового матча: игрок (1×1) или пара игроков (2×2).
 type MatchSide struct {
@@ -45,7 +41,7 @@ type sideInfo struct {
 	prevGames int // матчей в прошлых сезонах
 }
 
-// aGoesFirst - останется ли a стороной A, что ходит первой в пиках-банах: у неё меньше MMR, при равном -
+// aGoesFirst - останется ли a стороной A, что заходит в раунде первой: у неё меньше MMR, при равном -
 // меньше матчей в прошлых сезонах, при полном равенстве решает жребий.
 func aGoesFirst(a, b sideInfo, coin func() bool) bool {
 	if a.mmr != b.mmr {
@@ -307,9 +303,6 @@ func (s *Store) StartNextRound(ctx context.Context, tournamentID string) (int, e
 	if next == -1 {
 		return 0, ErrConflict
 	}
-	if rounds[next].MapCode == "" && rounds[next].Map == "" {
-		return 0, ErrNoMap
-	}
 
 	tx, err := s.Pool.Begin(ctx)
 	if err != nil {
@@ -342,14 +335,14 @@ type taskSlot struct {
 	onMap    bool
 }
 
-// DealRoundTasks выдаёт каждой стороне на раунд задание, задание на карту раунда и протокол из
-// пула под тип игроков; повторов в матче нет. Если на карту заданий нет, выдаётся ещё одно общее.
+// DealRoundTasks выдаёт каждой стороне на раунд общее задание и протокол из пула под тип игроков;
+// повторов в матче нет. Задание на карту выдаётся позже, когда ведущий отметит карту захода.
 func (s *Store) DealRoundTasks(ctx context.Context, roundID string) error {
-	var tournamentID, playerType, mapCode string
+	var tournamentID, playerType string
 	if err := s.Pool.QueryRow(ctx, `
-		SELECT r.tournament_id, t.player_type, COALESCE(r.map_code, '')
+		SELECT r.tournament_id, t.player_type
 		FROM rounds r JOIN tournaments t ON t.id = r.tournament_id WHERE r.id = $1`, roundID).
-		Scan(&tournamentID, &playerType, &mapCode); err != nil {
+		Scan(&tournamentID, &playerType); err != nil {
 		return err
 	}
 	var dealt bool
@@ -364,13 +357,10 @@ func (s *Store) DealRoundTasks(ctx context.Context, roundID string) error {
 		return err
 	}
 	sort.SliceStable(parts, func(i, j int) bool { return parts[i].Seed < parts[j].Seed })
-	slots := []taskSlot{{"task", false}, {"task", true}, {"protocol", false}}
+	slots := []taskSlot{{"task", false}, {"protocol", false}}
 	for _, p := range parts {
 		for _, sl := range slots {
-			id, err := s.pickTask(ctx, tournamentID, playerType, sl, mapCode, "")
-			if errors.Is(err, ErrNotFound) && sl.onMap {
-				id, err = s.pickTask(ctx, tournamentID, playerType, taskSlot{"task", false}, "", "")
-			}
+			id, err := s.pickTask(ctx, tournamentID, playerType, sl, "", "")
 			if errors.Is(err, ErrNotFound) {
 				continue
 			}
@@ -421,11 +411,12 @@ func (s *Store) RerollTask(ctx context.Context, assignmentID string) error {
 	var completed *string
 	err := s.Pool.QueryRow(ctx, `
 		SELECT r.tournament_id, t.player_type, rbt.task_id, ct.category, cardinality(ct.map_codes) > 0,
-		       COALESCE(r.map_code, ''), rbt.completed_by
+		       COALESCE(re.map_code, ''), rbt.completed_by
 		FROM round_bonus_tasks rbt
 		JOIN rounds r ON r.id = rbt.round_id
 		JOIN tournaments t ON t.id = r.tournament_id
 		JOIN catalog_tasks ct ON ct.id = rbt.task_id
+		LEFT JOIN round_entries re ON re.round_id = rbt.round_id AND re.participant_id = rbt.participant_id
 		WHERE rbt.id = $1`, assignmentID).
 		Scan(&tournamentID, &playerType, &taskID, &category, &onMap, &roundMap, &completed)
 	if errors.Is(err, pgx.ErrNoRows) {
@@ -595,11 +586,15 @@ func (s *Store) CompleteLegendaryInMatch(ctx context.Context, legendaryID, tourn
 	if p.TournamentID != tournamentID {
 		return ErrConflict
 	}
+	// Карта легендарки - карта захода стороны в этом раунде.
 	var roundID *string
 	var mapName string
 	var rid string
-	if err := s.Pool.QueryRow(ctx,
-		`SELECT id, map FROM rounds WHERE tournament_id = $1 AND number = $2`, tournamentID, roundNumber).Scan(&rid, &mapName); err == nil {
+	if err := s.Pool.QueryRow(ctx, `
+		SELECT r.id, COALESCE(m.name, r.map) FROM rounds r
+		LEFT JOIN round_entries re ON re.round_id = r.id AND re.participant_id = $3
+		LEFT JOIN maps m ON m.code = re.map_code
+		WHERE r.tournament_id = $1 AND r.number = $2`, tournamentID, roundNumber, participantID).Scan(&rid, &mapName); err == nil {
 		roundID = &rid
 	}
 	if _, err := s.CompleteLegendary(ctx, legendaryID, models.LegendaryCompletion{

@@ -43,7 +43,6 @@ type recapRaw struct {
 	users  [2]string
 	total  [2]int
 	rounds []recapRawRound
-	veto   []recapRawVeto
 }
 
 type recapRawRound struct {
@@ -65,8 +64,6 @@ type recapRawTask struct {
 	doneBy   int // -1 - не выполнено
 }
 
-type recapRawVeto struct{ action, mapCode string }
-
 type recapHist struct {
 	user       string
 	tournament string // пусто - сверка рейтинга
@@ -75,11 +72,8 @@ type recapHist struct {
 	before     int
 }
 
-// detailed - у матча есть раунды со счётом, задания или пики-баны; у матчей из таблицы организатора только итог и карта.
+// detailed - у матча есть раунды со счётом или задания; у матчей из таблицы организатора только итог и карта.
 func (m recapRaw) detailed() bool {
-	if len(m.veto) > 0 {
-		return true
-	}
 	for _, r := range m.rounds {
 		if r.entries || len(r.tasks) > 0 {
 			return true
@@ -368,21 +362,6 @@ func buildRecap(in recapInput) models.SeasonRecap {
 					out.BestKnock = &models.RecapBestKnock{Match: mi, Player: p, Knocks: k}
 				}
 			}
-		}
-		for _, v := range m.veto {
-			if i, ok := mapIdx[v.mapCode]; ok {
-				switch v.action {
-				case "ban":
-					out.Maps[i].Ban++
-				case "pick", "vote":
-					out.Maps[i].Pick++
-				case "rest":
-					out.Maps[i].Rest++
-				}
-			}
-		}
-		if len(m.veto) > 0 {
-			out.Summary.Vetoed++
 		}
 		if det && m.winner >= 0 {
 			w := m.winner

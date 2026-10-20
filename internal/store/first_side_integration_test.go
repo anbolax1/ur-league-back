@@ -14,8 +14,8 @@ import (
 	"github.com/ur-league/backend/internal/store"
 )
 
-// Ведущий меняет, кто первым ходит в пиках-банах: сделанные ходы переходят вместе со стороной A, после
-// начала раунда очерёдность не меняется. Запуск - как у TestMMRIntegration.
+// Ведущий меняет, кто заходит в раунде первым; после начала раунда очерёдность не меняется.
+// Запуск - как у TestMMRIntegration.
 func TestFirstSideIntegration(t *testing.T) {
 	url := os.Getenv("UR_TEST_DB")
 	if url == "" {
@@ -61,34 +61,16 @@ func TestFirstSideIntegration(t *testing.T) {
 	parts, _ := sides()
 	a, b := parts[0], parts[1]
 
-	maps, err := st.ListMaps(ctx)
-	if err != nil || len(maps) < 2 {
-		t.Fatalf("карты: %d, %v", len(maps), err)
-	}
-	for _, m := range maps[:2] {
-		if err := st.VetoMap(ctx, tour.ID, m.Code); err != nil {
-			t.Fatalf("VetoMap(%s): %v", m.Code, err)
-		}
-	}
-
 	if err := st.SetFirstSide(ctx, tour.ID, b.ID); err != nil {
 		t.Fatalf("SetFirstSide: %v", err)
 	}
 	parts, title := sides()
 	if parts[0].ID != b.ID || parts[1].ID != a.ID {
-		t.Fatalf("первым ходит %s, want %s", parts[0].Name, b.Name)
+		t.Fatalf("первым заходит %s, want %s", parts[0].Name, b.Name)
 	}
 	if want := b.Name + " vs " + a.Name; title != want {
 		t.Errorf("название %q, want %q", title, want)
 	}
-	veto, err := st.ListVeto(ctx, tour.ID)
-	if err != nil {
-		t.Fatalf("ListVeto: %v", err)
-	}
-	if len(veto) != 2 || veto[0].Side != "A" || veto[0].MapCode != maps[0].Code || veto[1].Side != "B" {
-		t.Errorf("ходы %+v: первый бан остаётся за стороной A, теперь это %s", veto, b.Name)
-	}
-
 	if err := st.SetFirstSide(ctx, tour.ID, b.ID); err != nil {
 		t.Fatalf("повторный SetFirstSide: %v", err)
 	}

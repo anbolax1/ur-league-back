@@ -57,3 +57,35 @@ func TestMatchOverlayKeepsTaskTags(t *testing.T) {
 		t.Fatalf("теги заданий: %+v", ls.BonusTasks)
 	}
 }
+
+func TestHeatSideStartsFromSideA(t *testing.T) {
+	tid, other, a, b := "t1", "t0", "pa", "pb"
+	parts := sidesBySeed(models.Tournament{Participants: []models.Participant{{ID: b, Seed: 2}, {ID: a, Seed: 1}}})
+
+	if p := heatSide(parts, tid, models.LiveState{}); p == nil || p.ID != a {
+		t.Fatalf("пока сторону не выбрали, заходит сторона A: %+v", p)
+	}
+	if p := heatSide(parts, tid, models.LiveState{TournamentID: &tid, CurrentParticipantID: &b}); p == nil || p.ID != b {
+		t.Fatalf("выбранная в пульте сторона: %+v", p)
+	}
+	if p := heatSide(parts, tid, models.LiveState{TournamentID: &other, CurrentParticipantID: &b}); p == nil || p.ID != a {
+		t.Fatalf("выбор из прошлого матча не в счёт: %+v", p)
+	}
+}
+
+func TestMatchOverlayShowsMapOfHeat(t *testing.T) {
+	tid, a, b := "t1", "pa", "pb"
+	st := models.MatchState{
+		Tournament:   models.Tournament{ID: tid, Participants: []models.Participant{{ID: a, Name: "EDEN", Seed: 1}, {ID: b, Name: "MAKAR", Seed: 2}}},
+		Stage:        "round",
+		CurrentRound: 2,
+		Heats: []models.Heat{
+			{RoundNumber: 1, ParticipantID: b, MapCode: "erangel", Map: "Эрангель"},
+			{RoundNumber: 2, ParticipantID: a, MapCode: "erangel", Map: "Эрангель"},
+			{RoundNumber: 2, ParticipantID: b, MapCode: "miramar", Map: "Мирамар"},
+		},
+	}
+	if ls := buildMatchLiveState(st, models.LiveState{TournamentID: &tid, CurrentParticipantID: &b}); ls.CurrentMap != "Мирамар" {
+		t.Fatalf("карта захода стороны в кадре: %q", ls.CurrentMap)
+	}
+}

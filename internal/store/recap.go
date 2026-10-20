@@ -172,6 +172,7 @@ func (s *Store) loadRecap(ctx context.Context, sn models.Season) (recapInput, er
 		       `+dealtTaskMap+`
 		FROM round_bonus_tasks b JOIN rounds r ON r.id = b.round_id JOIN tournaments t ON t.id = r.tournament_id
 		JOIN catalog_tasks ct ON ct.id = b.task_id
+		LEFT JOIN round_entries re ON re.round_id = b.round_id AND re.participant_id = b.participant_id
 		WHERE `+seasonMatches+`
 		ORDER BY b.created_at, b.id`, sn.ID)
 	if err != nil {
@@ -226,29 +227,6 @@ func (s *Store) loadRecap(ctx context.Context, sn models.Season) (recapInput, er
 			if sd, ok := side[pid]; ok {
 				in.matches[ref.match].rounds[ref.round].points[sd[1]] += points
 			}
-		}
-	}
-	rows.Close()
-	if err := rows.Err(); err != nil {
-		return in, err
-	}
-
-	rows, err = s.Pool.Query(ctx, `
-		SELECT v.tournament_id, v.action, v.map_code
-		FROM match_veto v JOIN tournaments t ON t.id = v.tournament_id
-		WHERE `+seasonMatches+`
-		ORDER BY v.tournament_id, v.seq`, sn.ID)
-	if err != nil {
-		return in, err
-	}
-	for rows.Next() {
-		var tid, action, code string
-		if err := rows.Scan(&tid, &action, &code); err != nil {
-			rows.Close()
-			return in, err
-		}
-		if mi, ok := byID[tid]; ok {
-			in.matches[mi].veto = append(in.matches[mi].veto, recapRawVeto{action, code})
 		}
 	}
 	rows.Close()

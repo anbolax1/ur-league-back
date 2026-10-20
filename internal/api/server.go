@@ -110,13 +110,10 @@ func (s *Server) Router() http.Handler {
 		// --- Superadmin only (организатор) ---
 		r.Group(func(r chi.Router) {
 			r.Use(s.requireRole(models.RoleSuperadmin))
-			// Матч 3 сезона: создание, пики-баны, раунды, зачёт, ручные очки, журнал, завершение.
+			// Матч: создание, раунды с заходами, зачёт, ручные очки, журнал, завершение.
 			r.Get("/match-players", s.handleListMatchPlayers)
 			r.Post("/players/placeholder", s.handleCreatePlaceholder)
 			r.Post("/matches", s.handleCreateMatch)
-			r.Post("/tournaments/{id}/veto", s.handleVeto)
-			r.Post("/tournaments/{id}/veto/undo", s.handleVetoUndo)
-			r.Post("/tournaments/{id}/maps", s.handleSetMatchMaps)
 			r.Post("/tournaments/{id}/first", s.handleFirstSide)
 			r.Post("/tournaments/{id}/rounds/next", s.handleNextRound)
 			r.Post("/tournaments/{id}/start", s.handleStartMatch)
@@ -133,6 +130,7 @@ func (s *Server) Router() http.Handler {
 			r.Post("/tournaments/{id}/finish", s.handleFinishMatch)
 			r.Post("/tournaments/{id}/cancel", s.handleCancelMatch)
 			r.Post("/tournaments/{id}/focus", s.handleMatchFocus)
+			r.Post("/tournaments/{id}/heat/map", s.handleHeatMap)
 			r.Post("/tournaments/{id}/points", s.handleMatchPoints)
 			r.Post("/tournaments/{id}/knocks", s.handleMatchKnock)
 			r.Post("/tournaments/{id}/legendary", s.handleMatchLegendary)

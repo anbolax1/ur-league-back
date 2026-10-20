@@ -1,12 +1,6 @@
 package store
 
-import (
-	"fmt"
-	"strings"
-	"testing"
-
-	"github.com/ur-league/backend/internal/models"
-)
+import "testing"
 
 func TestMatchRounds(t *testing.T) {
 	cases := []struct {
@@ -24,35 +18,6 @@ func TestMatchRounds(t *testing.T) {
 	for _, c := range cases {
 		if got := MatchRounds(c.format, c.rounds); got != c.want {
 			t.Errorf("MatchRounds(%q, %d) = %d, want %d", c.format, c.rounds, got, c.want)
-		}
-	}
-}
-
-func vetoText(order []models.VetoStep) string {
-	parts := make([]string, len(order))
-	for i, s := range order {
-		parts[i] = strings.TrimSpace(s.Action + " " + s.Side)
-		if s.Round > 0 {
-			parts[i] += fmt.Sprintf(" %d", s.Round)
-		}
-	}
-	return strings.Join(parts, ", ")
-}
-
-// Два раунда: по два бана, первую карту берёт B, вторую - A; три раунда: третью карту выбирает чат.
-// У прошлых матчей с одним раундом пиков-банов не было - для них порядок двухраундовый.
-func TestVetoOrder(t *testing.T) {
-	cases := []struct {
-		rounds int
-		want   string
-	}{
-		{2, "ban A, ban B, ban A, ban B, pick B 1, pick A 2"},
-		{3, "ban A, ban B, pick A 1, pick B 2, vote 3"},
-		{1, "ban A, ban B, ban A, ban B, pick B 1, pick A 2"},
-	}
-	for _, c := range cases {
-		if got := vetoText(VetoOrder(c.rounds)); got != c.want {
-			t.Errorf("VetoOrder(%d) = %s, want %s", c.rounds, got, c.want)
 		}
 	}
 }

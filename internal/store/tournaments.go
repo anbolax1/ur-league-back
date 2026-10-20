@@ -132,9 +132,10 @@ func (s *Store) ListTournaments(ctx context.Context, status string) ([]models.To
 			'name', p.name, 'points', p.total_points,
 			'winner', COALESCE(p.id = tournaments.winner_participant_id, false)) ORDER BY p.seed), '[]'::jsonb)
 		 FROM participants p WHERE p.tournament_id = tournaments.id),
-		COALESCE((SELECT jsonb_agg(r.map ORDER BY r.number) FROM rounds r
-		          WHERE r.tournament_id = tournaments.id AND r.map <> ''
-		            AND (r.status <> 'pending' OR tournaments.status <> 'finished')), tournaments.maps, '[]'::jsonb)
+		COALESCE((SELECT jsonb_agg(m.name ORDER BY r.number, p.seed) FROM round_entries re
+		          JOIN rounds r ON r.id = re.round_id JOIN participants p ON p.id = re.participant_id
+		          JOIN maps m ON m.code = re.map_code
+		          WHERE r.tournament_id = tournaments.id), tournaments.maps, '[]'::jsonb)
 		FROM tournaments`
 	args := []any{}
 	if status != "" {

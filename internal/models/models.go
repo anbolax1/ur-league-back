@@ -99,30 +99,13 @@ type Season struct {
 	Number    *int       `json:"number,omitempty"` // для адреса страницы итогов /season/{номер}
 }
 
-// MapInfo - карта из справочника (пики-баны, задания на карту, превью).
+// MapInfo - карта из справочника: её отмечают у захода, по ней выдаются задания на карту.
 type MapInfo struct {
 	Code      string    `json:"code"`
 	Name      string    `json:"name"`
 	Image     string    `json:"image"`
 	SortOrder int       `json:"sortOrder"`
-	AddedAt   time.Time `json:"addedAt"` // с этого момента карта в пуле пиков-банов
-}
-
-// VetoAction - ход пиков-банов: бан/пик стороны или оставшаяся карта, ушедшая в раунд.
-type VetoAction struct {
-	Seq         int    `json:"seq"`
-	Action      string `json:"action"` // ban | pick | rest | vote (карту выбрал чат)
-	Side        string `json:"side"`   // A | B; у оставшейся карты и выбора чата пусто
-	MapCode     string `json:"mapCode"`
-	MapName     string `json:"mapName"`
-	RoundNumber *int   `json:"roundNumber,omitempty"`
-}
-
-// VetoStep - ход в порядке пиков-банов: кто ходит, что делает и в какой раунд уходит карта.
-type VetoStep struct {
-	Action string `json:"action"` // ban | pick | rest | vote (карту выбрал чат)
-	Side   string `json:"side"`   // A | B; у оставшейся карты и выбора чата пусто
-	Round  int    `json:"round,omitempty"`
+	AddedAt   time.Time `json:"addedAt"` // когда карта появилась в справочнике
 }
 
 // MatchLogEntry - запись журнала матча (зачёт, ручные очки, легендарка).
@@ -130,7 +113,7 @@ type MatchLogEntry struct {
 	ID            string    `json:"id"`
 	RoundNumber   int       `json:"roundNumber"`
 	ParticipantID *string   `json:"participantId,omitempty"`
-	Kind          string    `json:"kind"` // task | points | knock | legendary
+	Kind          string    `json:"kind"` // task | points | knock | legendary | map
 	Text          string    `json:"text"`
 	Delta         int       `json:"delta"`
 	CreatedAt     time.Time `json:"createdAt"`
@@ -150,20 +133,28 @@ type RoundKnocks struct {
 	Knocks        int    `json:"knocks"`
 }
 
-// MatchState - всё о матче одним ответом: шапка, пики-баны, задания, очки по раундам и журнал.
+// Heat - заход стороны в раунде: карта, которую выбрала игра. Пусто - карту ещё не отметили.
+type Heat struct {
+	RoundNumber   int    `json:"roundNumber"`
+	ParticipantID string `json:"participantId"`
+	MapCode       string `json:"mapCode,omitempty"`
+	Map           string `json:"map,omitempty"`
+}
+
+// MatchState - всё о матче одним ответом: шапка, заходы, задания, очки по раундам и журнал.
 type MatchState struct {
 	Tournament   Tournament            `json:"tournament"`
-	Stage        string                `json:"stage"` // scheduled | veto | ready (карты выбраны) | round | finished
+	Stage        string                `json:"stage"` // scheduled | ready (стороны собраны) | round | finished
 	CurrentRound int                   `json:"currentRound"`
-	Veto         []VetoAction          `json:"veto"`
-	VetoOrder    []VetoStep            `json:"vetoOrder"`
+	Heats        []Heat                `json:"heats"`
 	Tasks        []RoundBonusTask      `json:"tasks"`
 	Legendary    []LegendaryCompletion `json:"legendary"`
 	Scores       []RoundScore          `json:"scores"`
 	Manual       []RoundScore          `json:"manual"` // вместе с очками за киллы
 	Knocks       []RoundKnocks         `json:"knocks"`
 	Log          []MatchLogEntry       `json:"log"`
-	Patches      []MatchPatch          `json:"patches"` // нашивки, полученные в этом матче
+	Patches      []MatchPatch          `json:"patches"`         // нашивки, полученные в этом матче
+	Focus        string                `json:"focus,omitempty"` // сторона, чей заход идёт: её задания и счёт показывает оверлей
 }
 
 // Matchup - противостояние сторон для страницы матча: рейтинг, что стоит на кону, личные встречи.
@@ -245,7 +236,7 @@ type Tournament struct {
 	ParticipantCount    int              `json:"participantCount"`    // в списках (без полного participants[])
 	HasSpace            bool             `json:"hasSpace"`            // есть ли свободные слоты (1×1: <2 игроков; 2×2: <2 команд или неполная команда)
 	Score               []SideScore      `json:"score,omitempty"`     // в списках: стороны по порядку со счётом
-	RoundMaps           []string         `json:"roundMaps,omitempty"` // в списках: карты по раундам
+	RoundMaps           []string         `json:"roundMaps,omitempty"` // в списках: карты заходов по раундам, сторона A первой
 	Participants        []Participant    `json:"participants,omitempty"`
 	Rounds              []Round          `json:"rounds,omitempty"`
 	MmrChanges          []ParticipantMmr `json:"mmrChanges,omitempty"` // изменение MMR сторон за этот матч (для завершённых)
@@ -663,16 +654,6 @@ type LiveComplication struct {
 	Tag       string `json:"tag,omitempty"`     // тег задания-протокола
 }
 
-// LiveVeto - ход пиков-банов для оверлея.
-type LiveVeto struct {
-	MapCode  string `json:"mapCode"`
-	MapName  string `json:"mapName"`
-	Action   string `json:"action"` // ban | pick | rest
-	Side     string `json:"side,omitempty"`
-	SideName string `json:"sideName,omitempty"`
-	Round    int    `json:"round,omitempty"`
-}
-
 // LiveStanding — сторона матча в оверлее с СУММАРНЫМИ очками (по всем раундам).
 type LiveStanding struct {
 	ParticipantID string `json:"participantId,omitempty"`
@@ -712,9 +693,8 @@ type LiveState struct {
 	Complication         *LiveComplication `json:"complication,omitempty"`
 	Standings            []LiveStanding    `json:"standings,omitempty"`
 	ShowStandings        bool              `json:"showStandings"`
-	CurrentMap           string            `json:"currentMap,omitempty"` // карта текущего раунда
-	Stage                string            `json:"stage,omitempty"`      // veto | ready | round | finished
-	Veto                 []LiveVeto        `json:"veto,omitempty"`       // ходы пиков-банов
+	CurrentMap           string            `json:"currentMap,omitempty"` // карта захода стороны в кадре
+	Stage                string            `json:"stage,omitempty"`      // ready | round | finished
 
 	// Богатые данные для модульных виджетов (Фаза 3). Заполняются «Эфиром»;
 	// пустые при дефолтном табло. Singular complication выше оставлен для совместимости.

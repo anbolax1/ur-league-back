@@ -52,14 +52,17 @@ func (s *Store) UndoLastMatchLog(ctx context.Context, tournamentID string) ([]st
 		return nil, err
 	}
 	var u struct {
-		Type          string  `json:"type"`
-		AssignmentID  string  `json:"assignmentId"`
-		Prev          *string `json:"prev"`
-		Target        *string `json:"target"`
-		RoundID       string  `json:"roundId"`
-		ParticipantID string  `json:"participantId"`
-		Applied       int     `json:"applied"`
-		LegendaryID   string  `json:"legendaryId"`
+		Type          string     `json:"type"`
+		AssignmentID  string     `json:"assignmentId"`
+		Prev          *string    `json:"prev"`
+		Target        *string    `json:"target"`
+		RoundID       string     `json:"roundId"`
+		ParticipantID string     `json:"participantId"`
+		Applied       int        `json:"applied"`
+		LegendaryID   string     `json:"legendaryId"`
+		PrevMap       string     `json:"prevMap"`
+		Dealt         string     `json:"dealt"`
+		Removed       []HeatTask `json:"removed"`
 	}
 	_ = json.Unmarshal(raw, &u)
 
@@ -92,6 +95,10 @@ func (s *Store) UndoLastMatchLog(ctx context.Context, tournamentID string) ([]st
 		if pid != nil {
 			affected = append(affected, *pid)
 		}
+	case "map":
+		if err := s.undoHeatMap(ctx, u.RoundID, u.ParticipantID, u.PrevMap, u.Dealt, u.Removed); err != nil {
+			return nil, err
+		}
 	}
 	if _, err := s.Pool.Exec(ctx, `DELETE FROM match_log WHERE id = $1`, id); err != nil {
 		return nil, err
@@ -99,7 +106,7 @@ func (s *Store) UndoLastMatchLog(ctx context.Context, tournamentID string) ([]st
 	return affected, nil
 }
 
-// GetMatchState собирает матч целиком: стороны, пики-баны, задания, очки по раундам и журнал.
+// GetMatchState собирает матч целиком: стороны, заходы, задания, очки по раундам и журнал.
 func (s *Store) GetMatchState(ctx context.Context, tournamentID string) (models.MatchState, error) {
 	var st models.MatchState
 	t, err := s.GetTournament(ctx, tournamentID)
@@ -107,10 +114,6 @@ func (s *Store) GetMatchState(ctx context.Context, tournamentID string) (models.
 		return st, err
 	}
 	st.Tournament = t
-	st.VetoOrder = VetoOrder(t.TotalRounds)
-	if st.Veto, err = s.ListVeto(ctx, tournamentID); err != nil {
-		return st, err
-	}
 	if st.Tasks, err = s.ListTournamentBonusTasks(ctx, tournamentID); err != nil {
 		return st, err
 	}
@@ -124,9 +127,10 @@ func (s *Store) GetMatchState(ctx context.Context, tournamentID string) (models.
 		return st, err
 	}
 
-	// Ручные очки с киллами - по раундам.
+	// Ручные очки с киллами и карты заходов - по раундам.
 	manual := map[int]map[string]int{}
 	knocks := map[int]map[string]int{}
+	heats := map[int]map[string]models.Heat{}
 	add := func(m map[int]map[string]int, round int, pid string, v int) {
 		if m[round] == nil {
 			m[round] = map[string]int{}
@@ -134,8 +138,9 @@ func (s *Store) GetMatchState(ctx context.Context, tournamentID string) (models.
 		m[round][pid] += v
 	}
 	rows, err := s.Pool.Query(ctx, `
-		SELECT r.number, re.participant_id, re.points, re.knocks
+		SELECT r.number, re.participant_id, re.points, re.knocks, COALESCE(re.map_code, ''), COALESCE(m.name, '')
 		FROM round_entries re JOIN rounds r ON r.id = re.round_id
+		LEFT JOIN maps m ON m.code = re.map_code
 		WHERE r.tournament_id = $1`, tournamentID)
 	if err != nil {
 		return st, err
@@ -143,12 +148,17 @@ func (s *Store) GetMatchState(ctx context.Context, tournamentID string) (models.
 	for rows.Next() {
 		var n, pts, k int
 		var pid string
-		if err := rows.Scan(&n, &pid, &pts, &k); err != nil {
+		var h models.Heat
+		if err := rows.Scan(&n, &pid, &pts, &k, &h.MapCode, &h.Map); err != nil {
 			rows.Close()
 			return st, err
 		}
 		add(manual, n, pid, pts)
 		add(knocks, n, pid, k)
+		if heats[n] == nil {
+			heats[n] = map[string]models.Heat{}
+		}
+		heats[n][pid] = h
 	}
 	rows.Close()
 
@@ -178,15 +188,14 @@ func (s *Store) GetMatchState(ctx context.Context, tournamentID string) (models.
 			st.Scores = append(st.Scores, models.RoundScore{RoundNumber: r.Number, ParticipantID: p.ID, Points: scores[r.Number][p.ID]})
 			st.Manual = append(st.Manual, models.RoundScore{RoundNumber: r.Number, ParticipantID: p.ID, Points: manual[r.Number][p.ID]})
 			st.Knocks = append(st.Knocks, models.RoundKnocks{RoundNumber: r.Number, ParticipantID: p.ID, Knocks: knocks[r.Number][p.ID]})
+			h := heats[r.Number][p.ID]
+			h.RoundNumber, h.ParticipantID = r.Number, p.ID
+			st.Heats = append(st.Heats, h)
 		}
 	}
 
-	st.Stage = "veto"
-	allMaps := len(t.Rounds) > 0
+	st.Stage = "ready"
 	for _, r := range t.Rounds {
-		if r.Map == "" {
-			allMaps = false
-		}
 		if r.Status == "live" {
 			st.Stage, st.CurrentRound = "round", r.Number
 		}
@@ -202,9 +211,6 @@ func (s *Store) GetMatchState(ctx context.Context, tournamentID string) (models.
 		}
 	case t.Status == "upcoming":
 		st.Stage = "scheduled"
-	case st.Stage == "round":
-	case allMaps:
-		st.Stage = "ready"
 	}
 	return st, nil
 }

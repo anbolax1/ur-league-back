@@ -1,7 +1,6 @@
 package api
 
 import (
-	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
@@ -15,7 +14,7 @@ import (
 	"github.com/ur-league/backend/internal/store"
 )
 
-// GET /api/maps - справочник карт с превью.
+// GET /api/maps - справочник карт с превью: их отмечают у заходов.
 func (s *Server) handleListMaps(w http.ResponseWriter, r *http.Request) {
 	maps, err := s.Store.ListMaps(r.Context())
 	if err != nil {
@@ -47,6 +46,7 @@ func (s *Server) handleGetMatch(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusNotFound, "матч не найден")
 		return
 	}
+	s.withHeatSide(r.Context(), &st)
 	writeJSON(w, http.StatusOK, st)
 }
 
@@ -87,6 +87,7 @@ func (s *Server) writeMatch(w http.ResponseWriter, r *http.Request, tournamentID
 	if st.Stage != "scheduled" {
 		s.publishMatchState(r.Context(), st)
 	}
+	s.withHeatSide(r.Context(), &st)
 	writeJSON(w, status, st)
 }
 
@@ -214,60 +215,7 @@ func (s *Server) handleCreateMatch(w http.ResponseWriter, r *http.Request) {
 	s.writeMatch(w, r, t.ID, http.StatusCreated)
 }
 
-// POST /api/tournaments/{id}/veto {mapCode} - следующий ход пиков-банов.
-func (s *Server) handleVeto(w http.ResponseWriter, r *http.Request) {
-	id := chi.URLParam(r, "id")
-	if !s.matchGuard(w, r, id) {
-		return
-	}
-	var b struct {
-		MapCode string `json:"mapCode"`
-	}
-	if err := readJSON(r, &b); err != nil || b.MapCode == "" {
-		writeError(w, http.StatusBadRequest, "укажите карту")
-		return
-	}
-	if err := s.Store.VetoMap(r.Context(), id, b.MapCode); err != nil {
-		writeVetoError(w, err)
-		return
-	}
-	s.writeMatch(w, r, id, http.StatusOK)
-}
-
-// POST /api/tournaments/{id}/veto/undo - отменить последний ход пиков-банов.
-func (s *Server) handleVetoUndo(w http.ResponseWriter, r *http.Request) {
-	id := chi.URLParam(r, "id")
-	if !s.matchGuard(w, r, id) {
-		return
-	}
-	if err := s.Store.VetoUndo(r.Context(), id); err != nil {
-		writeVetoError(w, err)
-		return
-	}
-	s.writeMatch(w, r, id, http.StatusOK)
-}
-
-// POST /api/tournaments/{id}/maps {maps: [code, ...]} - карты раундов вручную, если пики-баны прошли вне эфира.
-func (s *Server) handleSetMatchMaps(w http.ResponseWriter, r *http.Request) {
-	id := chi.URLParam(r, "id")
-	if !s.matchGuard(w, r, id) {
-		return
-	}
-	var b struct {
-		Maps []string `json:"maps"`
-	}
-	if err := readJSON(r, &b); err != nil || len(b.Maps) == 0 || len(b.Maps) > 3 {
-		writeError(w, http.StatusBadRequest, "укажите карты раундов")
-		return
-	}
-	if err := s.Store.SetMatchMaps(r.Context(), id, b.Maps); err != nil {
-		writeVetoError(w, err)
-		return
-	}
-	s.writeMatch(w, r, id, http.StatusOK)
-}
-
-// POST /api/tournaments/{id}/first {participantId} - кто первым ходит в пиках-банах: ведущий ставит
+// POST /api/tournaments/{id}/first {participantId} - кто заходит в раунде первым: ведущий ставит
 // сторону по жребию на эфире.
 func (s *Server) handleFirstSide(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "id")
@@ -298,19 +246,6 @@ func (s *Server) handleFirstSide(w http.ResponseWriter, r *http.Request) {
 	s.writeMatch(w, r, id, http.StatusOK)
 }
 
-func writeVetoError(w http.ResponseWriter, err error) {
-	switch {
-	case errors.Is(err, store.ErrMatchStarted):
-		writeError(w, http.StatusConflict, "раунд уже начался — карты не меняются")
-	case errors.Is(err, store.ErrNotFound):
-		writeError(w, http.StatusBadRequest, "нет такой карты")
-	case errors.Is(err, store.ErrConflict):
-		writeError(w, http.StatusConflict, "эта карта уже выбрана или пики-баны закончены")
-	default:
-		writeError(w, http.StatusInternalServerError, err.Error())
-	}
-}
-
 // POST /api/tournaments/{id}/rounds/next - начать первый раунд или перейти к следующему.
 func (s *Server) handleNextRound(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "id")
@@ -318,15 +253,18 @@ func (s *Server) handleNextRound(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if _, err := s.Store.StartNextRound(r.Context(), id); err != nil {
-		switch {
-		case errors.Is(err, store.ErrNoMap):
-			writeError(w, http.StatusConflict, "у раунда нет карты — сначала пики-баны")
-		case errors.Is(err, store.ErrConflict):
+		if errors.Is(err, store.ErrConflict) {
 			writeError(w, http.StatusConflict, "это последний раунд — завершите матч")
-		default:
-			writeError(w, http.StatusInternalServerError, err.Error())
+			return
 		}
+		writeError(w, http.StatusInternalServerError, err.Error())
 		return
+	}
+	// Заходы в раунде идут по очереди, первой - сторона A: оверлей переключается на неё.
+	if t, err := s.Store.GetTournament(r.Context(), id); err == nil {
+		if parts := sidesBySeed(t); len(parts) > 0 {
+			s.storeHeatSide(r.Context(), id, parts[0].ID)
+		}
 	}
 	s.writeMatch(w, r, id, http.StatusOK)
 }
@@ -511,7 +449,7 @@ func (s *Server) handleCancelMatch(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
-// POST /api/tournaments/{id}/focus {participantId} - чья сторона сейчас в рейде (только для оверлея).
+// POST /api/tournaments/{id}/focus {participantId} - чей заход сейчас идёт: его показывает оверлей.
 func (s *Server) handleMatchFocus(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "id")
 	var b struct {
@@ -526,13 +464,46 @@ func (s *Server) handleMatchFocus(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "сторона не из этого матча")
 		return
 	}
-	data, _ := s.Store.GetLiveState(r.Context())
-	var stored models.LiveState
-	_ = json.Unmarshal(data, &stored)
-	stored.TournamentID = &id
-	stored.CurrentParticipantID = &p.ID
-	if norm, err := json.Marshal(stored); err == nil {
-		_ = s.Store.SetLiveState(r.Context(), norm)
+	s.storeHeatSide(r.Context(), id, p.ID)
+	s.writeMatch(w, r, id, http.StatusOK)
+}
+
+// POST /api/tournaments/{id}/heat/map {participantId, mapCode} - карта, которую выбрала игра для захода
+// стороны в идущем раунде; задание на эту карту выдаётся сразу.
+func (s *Server) handleHeatMap(w http.ResponseWriter, r *http.Request) {
+	id := chi.URLParam(r, "id")
+	if !s.matchGuard(w, r, id) {
+		return
+	}
+	var b struct {
+		ParticipantID string `json:"participantId"`
+		MapCode       string `json:"mapCode"`
+	}
+	if err := readJSON(r, &b); err != nil || b.ParticipantID == "" || b.MapCode == "" {
+		writeError(w, http.StatusBadRequest, "укажите сторону и карту")
+		return
+	}
+	rd, names, ok := s.liveSide(w, r, id, b.ParticipantID)
+	if !ok {
+		return
+	}
+	ch, err := s.Store.SetHeatMap(r.Context(), rd.ID, b.ParticipantID, b.MapCode)
+	switch {
+	case errors.Is(err, store.ErrNotFound):
+		writeError(w, http.StatusBadRequest, "нет такой карты")
+		return
+	case errors.Is(err, store.ErrConflict):
+		writeError(w, http.StatusConflict, "задание на прежнюю карту уже выполнено — сначала отмените его зачёт")
+		return
+	case err != nil:
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	if ch.Changed {
+		pid := b.ParticipantID
+		_ = s.Store.AddMatchLog(r.Context(), id, rd.Number, &pid, "map", names[pid]+": карта "+ch.MapName, 0, map[string]any{
+			"type": "map", "roundId": rd.ID, "participantId": pid, "prevMap": ch.Prev, "dealt": ch.Dealt, "removed": ch.Removed,
+		})
 	}
 	s.writeMatch(w, r, id, http.StatusOK)
 }

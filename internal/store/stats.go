@@ -10,23 +10,27 @@ import (
 	"github.com/ur-league/backend/internal/models"
 )
 
-// Сыгранные карты матча (t - его турнир): из начатых раундов - при досрочном завершении следующая карта
-// выбрана, но не сыграна; у перенесённых из таблицы без карт в раундах - из списка карт матча.
+// Сыгранные карты матча (t - его турнир) - карты его заходов; у матча без отмеченных карт - список
+// карт матча.
 
-// matchMapsLabel - сыгранные карты матча строкой по порядку раундов, как в архиве.
+// matchMapsLabel - сыгранные карты матча строкой: сколько заходов на каждой, чаще сыгранная первой.
 const matchMapsLabel = `COALESCE(
-		(SELECT string_agg(r.map, ' · ' ORDER BY r.number) FROM rounds r
-		 WHERE r.tournament_id = t.id AND r.map <> '' AND r.status <> 'pending'),
+		(SELECT string_agg(x.name || ' ' || x.n, ' · ' ORDER BY x.n DESC, x.name) FROM (
+			SELECT m.name, COUNT(*) AS n FROM round_entries re
+			JOIN rounds r ON r.id = re.round_id JOIN maps m ON m.code = re.map_code
+			WHERE r.tournament_id = t.id GROUP BY m.name) x),
 		(SELECT string_agg(m, ' · ') FROM jsonb_array_elements_text(t.maps) m WHERE m <> ''), '')`
 
 // matchMapsJoin даёт по строке на каждую сыгранную карту матча (mm.map): матч на двух картах идёт
 // в статистику обеих.
 const matchMapsJoin = `LEFT JOIN LATERAL (
-		SELECT r.map FROM rounds r WHERE r.tournament_id = t.id AND r.map <> '' AND r.status <> 'pending'
+		SELECT m.name FROM round_entries re JOIN rounds r ON r.id = re.round_id JOIN maps m ON m.code = re.map_code
+		WHERE r.tournament_id = t.id
 		UNION
 		SELECT m FROM jsonb_array_elements_text(t.maps) m
 		WHERE m <> '' AND NOT EXISTS (
-			SELECT 1 FROM rounds r2 WHERE r2.tournament_id = t.id AND r2.map <> '' AND r2.status <> 'pending')
+			SELECT 1 FROM round_entries re2 JOIN rounds r2 ON r2.id = re2.round_id
+			WHERE r2.tournament_id = t.id AND re2.map_code IS NOT NULL)
 	) mm(map) ON true`
 
 // В старых сезонах названия карт набраны капсом и без «ё»: одна карта - одна строка статистики,

@@ -193,14 +193,14 @@ func (s *Store) PlayerAggregate(ctx context.Context, userID string) (models.Play
 		st.LegendaryPoints += b.Legendary
 	}
 
-	// любимая карта — где сыграно больше всего раундов
+	// любимая карта — где у игрока больше всего заходов
 	err = s.Pool.QueryRow(ctx, `
-		SELECT r.map, COUNT(*)
+		SELECT m.name, COUNT(*)
 		FROM round_entries re
-		JOIN rounds r ON r.id = re.round_id
-		WHERE re.participant_id = ANY($1) AND r.map <> ''
-		GROUP BY r.map
-		ORDER BY COUNT(*) DESC, r.map
+		JOIN maps m ON m.code = re.map_code
+		WHERE re.participant_id = ANY($1)
+		GROUP BY m.name
+		ORDER BY COUNT(*) DESC, m.name
 		LIMIT 1`, pids).Scan(&st.FavoriteMap, &st.FavoriteMapRounds)
 	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
 		return st, err

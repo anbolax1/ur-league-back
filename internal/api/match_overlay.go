@@ -9,7 +9,7 @@ import (
 	"github.com/ur-league/backend/internal/models"
 )
 
-// publishMatchOverlay считает для оверлея счёт и задания, а раскладку и сторону «в рейде» берёт
+// publishMatchOverlay считает для оверлея счёт и задания, а раскладку и сторону, чей заход идёт, берёт
 // из сохранённого состояния - оверлей не зависит от того, с какого устройства ведут пульт.
 func (s *Server) publishMatchOverlay(ctx context.Context, tournamentID string) {
 	st, err := s.Store.GetMatchState(ctx, tournamentID)
@@ -20,10 +20,7 @@ func (s *Server) publishMatchOverlay(ctx context.Context, tournamentID string) {
 }
 
 func (s *Server) publishMatchState(ctx context.Context, st models.MatchState) {
-	data, _ := s.Store.GetLiveState(ctx)
-	var stored models.LiveState
-	_ = json.Unmarshal(data, &stored)
-	norm, err := json.Marshal(s.matchLiveState(ctx, st, stored))
+	norm, err := json.Marshal(s.matchLiveState(ctx, st, s.storedLiveState(ctx)))
 	if err != nil {
 		return
 	}
@@ -32,6 +29,34 @@ func (s *Server) publishMatchState(ctx context.Context, st models.MatchState) {
 	}
 	if env, err := s.stateEnvelope(norm); err == nil {
 		s.Hub.Broadcast(env)
+	}
+}
+
+// storedLiveState - состояние оверлея из базы; в нём же сторона, чей заход идёт, общая для всех устройств пульта.
+func (s *Server) storedLiveState(ctx context.Context) models.LiveState {
+	data, _ := s.Store.GetLiveState(ctx)
+	var stored models.LiveState
+	_ = json.Unmarshal(data, &stored)
+	return stored
+}
+
+// storeHeatSide запоминает сторону, чей заход идёт; оверлей и пульт возьмут её при следующей публикации матча.
+func (s *Server) storeHeatSide(ctx context.Context, tournamentID, participantID string) {
+	stored := s.storedLiveState(ctx)
+	stored.TournamentID = &tournamentID
+	stored.CurrentParticipantID = &participantID
+	if norm, err := json.Marshal(stored); err == nil {
+		_ = s.Store.SetLiveState(ctx, norm)
+	}
+}
+
+// withHeatSide дописывает в идущий раунд сторону, чей заход идёт: по ней пульт подписывает кнопку хода матча.
+func (s *Server) withHeatSide(ctx context.Context, st *models.MatchState) {
+	if st.Stage != "round" {
+		return
+	}
+	if p := heatSide(sidesBySeed(st.Tournament), st.Tournament.ID, s.storedLiveState(ctx)); p != nil {
+		st.Focus = p.ID
 	}
 }
 
@@ -86,18 +111,31 @@ func overlayTaskText(t models.RoundBonusTask) string {
 	return t.Text
 }
 
-func buildMatchLiveState(st models.MatchState, stored models.LiveState) models.LiveState {
-	t := st.Tournament
+// sidesBySeed - стороны матча по порядку: A, потом B.
+func sidesBySeed(t models.Tournament) []models.Participant {
 	parts := append([]models.Participant(nil), t.Participants...)
 	sort.SliceStable(parts, func(i, j int) bool { return parts[i].Seed < parts[j].Seed })
-	sides := map[string]string{}
-	for i, p := range parts {
-		if i == 0 {
-			sides["A"] = p.Name
-		} else if i == 1 {
-			sides["B"] = p.Name
+	return parts
+}
+
+// heatSide - сторона, чей заход идёт: выбранная в пульте, а пока не выбрана - сторона A.
+func heatSide(parts []models.Participant, tournamentID string, stored models.LiveState) *models.Participant {
+	if stored.TournamentID != nil && *stored.TournamentID == tournamentID && stored.CurrentParticipantID != nil {
+		for i := range parts {
+			if parts[i].ID == *stored.CurrentParticipantID {
+				return &parts[i]
+			}
 		}
 	}
+	if len(parts) > 0 {
+		return &parts[0]
+	}
+	return nil
+}
+
+func buildMatchLiveState(st models.MatchState, stored models.LiveState) models.LiveState {
+	t := st.Tournament
+	parts := sidesBySeed(t)
 
 	round := st.CurrentRound
 	if round == 0 {
@@ -112,17 +150,7 @@ func buildMatchLiveState(st models.MatchState, stored models.LiveState) models.L
 		}
 	}
 
-	var focus *models.Participant
-	if stored.TournamentID != nil && *stored.TournamentID == t.ID && stored.CurrentParticipantID != nil {
-		for i := range parts {
-			if parts[i].ID == *stored.CurrentParticipantID {
-				focus = &parts[i]
-			}
-		}
-	}
-	if focus == nil && len(parts) > 0 {
-		focus = &parts[0]
-	}
+	focus := heatSide(parts, t.ID, stored)
 
 	ls := models.LiveState{
 		TournamentID:   &t.ID,
@@ -139,23 +167,16 @@ func buildMatchLiveState(st models.MatchState, stored models.LiveState) models.L
 	if stored.TournamentID != nil && *stored.TournamentID == t.ID {
 		ls.PatchFlashes = stored.PatchFlashes
 	}
-	for _, r := range t.Rounds {
-		if r.Number == round {
-			ls.CurrentMap = r.Map
-		}
-	}
 	for _, p := range parts {
 		ls.Standings = append(ls.Standings, models.LiveStanding{ParticipantID: p.ID, Name: p.Name, Points: total[p.ID], RoundPoints: inRound[p.ID]})
 	}
-	for _, v := range st.Veto {
-		lv := models.LiveVeto{MapCode: v.MapCode, MapName: v.MapName, Action: v.Action, Side: v.Side, SideName: sides[v.Side]}
-		if v.RoundNumber != nil {
-			lv.Round = *v.RoundNumber
-		}
-		ls.Veto = append(ls.Veto, lv)
-	}
 	if focus == nil {
 		return ls
+	}
+	for _, h := range st.Heats {
+		if h.RoundNumber == round && h.ParticipantID == focus.ID {
+			ls.CurrentMap = h.Map
+		}
 	}
 	ls.CurrentParticipantID = &focus.ID
 	ls.CurrentName = focus.Name

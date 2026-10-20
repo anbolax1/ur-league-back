@@ -13,8 +13,11 @@ import (
 const rbtCols = `rbt.id, rbt.round_id, r.number, rbt.participant_id, rbt.task_id, ct.text, ct.points, ct.value_type, ct.kind, rbt.times, rbt.completed_by,
 	ct.name, ct.category, ct.tag, ` + dealtTaskMap
 
-// dealtTaskMap - карта выданного задания: у задания на картах это карта раунда, у общего - пусто.
-const dealtTaskMap = `CASE WHEN cardinality(ct.map_codes) > 0 THEN COALESCE(r.map_code, '') ELSE '' END`
+// dealtTaskMap - карта выданного задания: у задания на картах это карта захода стороны, у общего - пусто.
+const dealtTaskMap = `CASE WHEN cardinality(ct.map_codes) > 0 THEN COALESCE(re.map_code, '') ELSE '' END`
+
+// heatJoin - заход владельца задания, из него берётся карта задания.
+const heatJoin = `LEFT JOIN round_entries re ON re.round_id = rbt.round_id AND re.participant_id = rbt.participant_id`
 
 func scanRoundBonusTask(row pgx.Row) (models.RoundBonusTask, error) {
 	var t models.RoundBonusTask
@@ -31,8 +34,9 @@ func (s *Store) ListTournamentBonusTasks(ctx context.Context, tournamentID strin
 		FROM round_bonus_tasks rbt
 		JOIN catalog_tasks ct ON ct.id = rbt.task_id
 		JOIN rounds r ON r.id = rbt.round_id
+		`+heatJoin+`
 		WHERE r.tournament_id = $1
-		ORDER BY r.number, rbt.participant_id, ct.category, cardinality(ct.map_codes) > 0, ct.text`, tournamentID)
+		ORDER BY r.number, rbt.participant_id, ct.category, rbt.map_slot, ct.text`, tournamentID)
 	if err != nil {
 		return nil, err
 	}
@@ -137,6 +141,7 @@ func (s *Store) GetBonusAssignment(ctx context.Context, id string) (models.Round
 		FROM round_bonus_tasks rbt
 		JOIN catalog_tasks ct ON ct.id = rbt.task_id
 		JOIN rounds r ON r.id = rbt.round_id
+		`+heatJoin+`
 		WHERE rbt.id = $1`, id)
 	var t models.RoundBonusTask
 	err := row.Scan(&t.ID, &t.RoundID, &t.RoundNumber, &t.ParticipantID, &t.TaskID,

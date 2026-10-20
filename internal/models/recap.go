@@ -34,8 +34,7 @@ type RecapSummary struct {
 	Players     int               `json:"players"`
 	OneMatch    int               `json:"oneMatch"`
 	X2          int               `json:"x2"`
-	Detailed    int               `json:"detailed"` // матчей с раундами, пиками-банами и заданиями
-	Vetoed      int               `json:"vetoed"`
+	Detailed    int               `json:"detailed"` // матчей с раундами и заданиями
 	Knocks      int               `json:"knocks"`
 	GameDays    int               `json:"gameDays"`
 	First       *time.Time        `json:"first,omitempty"`
@@ -105,9 +104,6 @@ type RecapLeader struct {
 type RecapMap struct {
 	Code         string `json:"code"`
 	Name         string `json:"name"`
-	Ban          int    `json:"ban"`
-	Pick         int    `json:"pick"`
-	Rest         int    `json:"rest"` // осталась после банов и ушла в последний раунд
 	Rounds       int    `json:"rounds"`
 	Points       int    `json:"points"` // обе стороны за все раунды
 	Knocks       int    `json:"knocks"`
