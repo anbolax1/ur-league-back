@@ -364,12 +364,14 @@ type MmrStats struct {
 	Place             int        `json:"place"` // место в турнирной таблице (0 = вне рейтинга)
 }
 
-// MapStat — сколько матчей/побед/поражений на конкретной карте.
+// MapStat - заходы стороны на одной карте: сколько их, киллы и места по экрану итогов.
 type MapStat struct {
-	Map    string `json:"map"`
-	Games  int    `json:"games"`
-	Wins   int    `json:"wins"`
-	Losses int    `json:"losses"`
+	Map      string  `json:"map"`
+	Heats    int     `json:"heats"`
+	Knocks   int     `json:"knocks"`
+	Placed   int     `json:"placed"`   // заходов с записанным местом
+	AvgPlace float64 `json:"avgPlace"` // 0 - мест не записано
+	Chickens int     `json:"chickens"`
 }
 
 // OpponentStat — head-to-head против конкретного соперника (игрока или команды).
@@ -449,6 +451,13 @@ type PlayerStats struct {
 	BestPlace   int     `json:"bestPlace"`
 	AvgPlace    float64 `json:"avgPlace"`
 	Chickens    int     `json:"chickens"`
+	Top5        int     `json:"top5"`
+
+	// Задания стороны игрока: выданные, выполненные свои и выполненные чужие; легендарки.
+	TasksOffered int `json:"tasksOffered"`
+	TasksDone    int `json:"tasksDone"`
+	TasksCross   int `json:"tasksCross"`
+	Legendaries  int `json:"legendaries"`
 }
 
 // PlayerProfile — публичный профиль игрока: пользователь + статы + история (B6).
@@ -477,14 +486,14 @@ type SeasonAnalytics struct {
 	Knocks    KnockStats     `json:"knocks"`
 }
 
-// KnockStats - киллы игрока за сезон. Матч идёт в зачёт, только если киллы в нём записаны хотя бы
-// одной стороне: в остальных их не считали, и нули занизили бы среднее.
+// KnockStats - киллы игрока за сезон по сыгранным заходам.
 type KnockStats struct {
-	Matches      int    `json:"matches"`
+	Heats        int    `json:"heats"`
 	Knocks       int    `json:"knocks"`
-	Best         int    `json:"best"` // больше всего киллов за один матч
+	Best         int    `json:"best"` // больше всего киллов за один заход
 	BestMatch    string `json:"bestMatch,omitempty"`
 	BestOpponent string `json:"bestOpponent,omitempty"`
+	BestMap      string `json:"bestMap,omitempty"`
 }
 
 // PlayerPatch - нашивка игрока за сезон. Detail - подробности для подписи: соперник и счёт, число раз,

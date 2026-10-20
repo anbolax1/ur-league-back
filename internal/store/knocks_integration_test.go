@@ -105,10 +105,10 @@ func TestKnocksIntegration(t *testing.T) {
 		}
 		var sum models.KnockStats
 		for _, k := range by {
-			sum.Matches += k.Matches
+			sum.Heats += k.Heats
 			sum.Knocks += k.Knocks
 			if k.Best > sum.Best {
-				sum.Best, sum.BestMatch, sum.BestOpponent = k.Best, k.BestMatch, k.BestOpponent
+				sum.Best, sum.BestMatch, sum.BestOpponent, sum.BestMap = k.Best, k.BestMatch, k.BestOpponent, k.BestMap
 			}
 		}
 		return sum
@@ -132,22 +132,29 @@ func TestKnocksIntegration(t *testing.T) {
 		points(sa, 1, 1)
 		entry(sa, 7, 2)
 	})
-	// Ни одного килла у обеих сторон - киллы в матче не считали, в статистику он не идёт.
+	// Заходы без киллов, карты и места не сыграны - в статистику не идут.
 	match1x1(a, c, func(_, _ side) {})
-	// Киллы только у соперника: матч идёт в зачёт и стороне без киллов - с нулём.
-	m3 := match1x1(b, c, func(_, sc side) {
+	// Заход с местом, но без киллов, сыгран - в зачёт с нулём; у лучшего захода видна его карта.
+	m3 := match1x1(b, c, func(sb, sc side) {
 		for range 4 {
 			knock(sc, 1, 1)
 		}
+		if _, err := st.SetHeatMap(ctx, sc.round, sc.pid, "miramar"); err != nil {
+			t.Fatalf("SetHeatMap: %v", err)
+		}
+		place := 3
+		if _, err := st.SetHeatPlace(ctx, sb.round, sb.pid, &place); err != nil {
+			t.Fatalf("SetHeatPlace: %v", err)
+		}
 	})
 
-	if got, want := knocksOf(a), (models.KnockStats{Matches: 1, Knocks: 2, Best: 2, BestMatch: m1, BestOpponent: b.Login}); got != want {
+	if got, want := knocksOf(a), (models.KnockStats{Heats: 1, Knocks: 2, Best: 2, BestMatch: m1, BestOpponent: b.Login}); got != want {
 		t.Errorf("киллы a = %+v, want %+v", got, want)
 	}
-	if got, want := knocksOf(b), (models.KnockStats{Matches: 2}); got != want {
+	if got, want := knocksOf(b), (models.KnockStats{Heats: 1}); got != want {
 		t.Errorf("киллы b = %+v, want %+v", got, want)
 	}
-	if got, want := knocksOf(c), (models.KnockStats{Matches: 1, Knocks: 4, Best: 4, BestMatch: m3, BestOpponent: b.Login}); got != want {
+	if got, want := knocksOf(c), (models.KnockStats{Heats: 1, Knocks: 4, Best: 4, BestMatch: m3, BestOpponent: b.Login, BestMap: "Мирамар"}); got != want {
 		t.Errorf("киллы c = %+v, want %+v", got, want)
 	}
 }

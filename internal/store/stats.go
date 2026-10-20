@@ -13,6 +13,17 @@ import (
 // Сыгранные карты матча (t - его турнир) - карты его заходов; у матча без отмеченных карт - список
 // карт матча.
 
+// heatPlayed - заход стороны (re) сыгран: ведущий отметил карту или место, или в нём есть киллы.
+const heatPlayed = `(re.map_code IS NOT NULL OR re.place IS NOT NULL OR re.knocks > 0)`
+
+// heatMapCols - разбор заходов по картам: карта, заходов, киллов, заходов с местом, среднее место, чикены.
+const heatMapCols = `m.name, COUNT(*)::int, COALESCE(SUM(re.knocks), 0)::int, COUNT(re.place)::int,
+		AVG(re.place)::float8, (COUNT(*) FILTER (WHERE re.place = 1))::int`
+
+// teamKeyOf - ключ команды стороны p, как в teamKeyFromParticipant: userId состава по порядку через «|».
+const teamKeyOf = `(SELECT string_agg(mb->>'userId', '|' ORDER BY mb->>'userId' COLLATE "C")
+		FROM jsonb_array_elements(CASE WHEN jsonb_typeof(p.members) = 'array' THEN p.members ELSE '[]'::jsonb END) mb)`
+
 // matchMapsLabel - сыгранные карты матча строкой: сколько заходов на каждой, чаще сыгранная первой.
 const matchMapsLabel = `COALESCE(
 		(SELECT string_agg(x.name || ' ' || x.n, ' · ' ORDER BY x.n DESC, x.name) FROM (
@@ -20,28 +31,6 @@ const matchMapsLabel = `COALESCE(
 			JOIN rounds r ON r.id = re.round_id JOIN maps m ON m.code = re.map_code
 			WHERE r.tournament_id = t.id GROUP BY m.name) x),
 		(SELECT string_agg(m, ' · ') FROM jsonb_array_elements_text(t.maps) m WHERE m <> ''), '')`
-
-// matchMapsJoin даёт по строке на каждую сыгранную карту матча (mm.map): матч на двух картах идёт
-// в статистику обеих.
-const matchMapsJoin = `LEFT JOIN LATERAL (
-		SELECT m.name FROM round_entries re JOIN rounds r ON r.id = re.round_id JOIN maps m ON m.code = re.map_code
-		WHERE r.tournament_id = t.id
-		UNION
-		SELECT m FROM jsonb_array_elements_text(t.maps) m
-		WHERE m <> '' AND NOT EXISTS (
-			SELECT 1 FROM round_entries re2 JOIN rounds r2 ON r2.id = re2.round_id
-			WHERE r2.tournament_id = t.id AND re2.map_code IS NOT NULL)
-	) mm(map) ON true`
-
-// В старых сезонах названия карт набраны капсом и без «ё»: одна карта - одна строка статистики,
-// название берётся обычное, не капсом.
-const (
-	mapStatKey  = `replace(upper(COALESCE(mm.map, '')), 'Ё', 'Е')`
-	mapStatName = `COALESCE((array_agg(mm.map ORDER BY mm.map = upper(mm.map), mm.map))[1], '')`
-)
-
-// noMapName - строка статистики для матчей, у которых карта не записана.
-const noMapName = "Без карты"
 
 // ================== Общая агрегация статистики из ленты матчей ==================
 
@@ -124,38 +113,19 @@ func (s *Store) Player1x1Timeline(ctx context.Context, userID string) ([]models.
 	return s.scanTimeline(ctx, q, userID)
 }
 
-// Player1x1MapsBySeason — разбивка матчей 1×1 по картам в каждом сезоне (взвешенно по ×2); матч на
-// нескольких картах засчитан на каждую. Ключ - сезон, пусто - матчи вне сезонов.
+// Player1x1MapsBySeason - заходы игрока в матчах 1×1 по картам в каждом сезоне. Ключ - сезон,
+// пусто - матчи вне сезонов.
 func (s *Store) Player1x1MapsBySeason(ctx context.Context, userID string) (map[string][]models.MapStat, error) {
 	const q = `
-		SELECT COALESCE(h.season_key, '') AS season, ` + mapStatName + ` AS mp,
-		       COALESCE(SUM(t.games) FILTER (WHERE h.delta > 0), 0)::int AS wins,
-		       COALESCE(SUM(t.games) FILTER (WHERE h.delta < 0), 0)::int AS losses,
-		       COALESCE(SUM(t.games), 0)::int AS games
+		SELECT COALESCE(h.season_key, ''), ` + heatMapCols + `
 		FROM mmr_history h
-		JOIN tournaments t ON t.id = h.tournament_id
-		` + matchMapsJoin + `
+		JOIN participants p ON p.tournament_id = h.tournament_id AND p.user_id = h.user_id
+		JOIN round_entries re ON re.participant_id = p.id
+		JOIN maps m ON m.code = re.map_code
 		WHERE h.user_id = $1 AND h.mode = '1x1'
-		GROUP BY season, ` + mapStatKey + `
-		ORDER BY season, games DESC, mp`
-	rows, err := s.Pool.Query(ctx, q, userID)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	out := map[string][]models.MapStat{}
-	for rows.Next() {
-		var season string
-		var m models.MapStat
-		if err := rows.Scan(&season, &m.Map, &m.Wins, &m.Losses, &m.Games); err != nil {
-			return nil, err
-		}
-		if m.Map == "" {
-			m.Map = noMapName
-		}
-		out[season] = append(out[season], m)
-	}
-	return out, rows.Err()
+		GROUP BY 1, m.name
+		ORDER BY 1, 3 DESC, m.name`
+	return s.scanHeatMaps(ctx, q, userID)
 }
 
 // Player1x1OpponentsBySeason — head-to-head игрока в 1×1 в каждом сезоне (взвешенно по ×2), частые
@@ -195,22 +165,23 @@ func (s *Store) Player1x1OpponentsBySeason(ctx context.Context, userID string) (
 	return out, rows.Err()
 }
 
-// Player1x1KnocksBySeason - киллы игрока в матчах 1×1 по сезонам. Ключ - сезон, пусто - матчи вне сезонов.
+// Player1x1KnocksBySeason - киллы игрока в сыгранных заходах матчей 1×1 по сезонам. Ключ - сезон,
+// пусто - матчи вне сезонов.
 func (s *Store) Player1x1KnocksBySeason(ctx context.Context, userID string) (map[string]models.KnockStats, error) {
 	const q = `
-		SELECT COALESCE(t.season_id, '') AS season, t.id, COALESCE(opp.name, ''),
-		       (SELECT COALESCE(SUM(re.knocks), 0) FROM round_entries re WHERE re.participant_id = p.id)::int
+		SELECT COALESCE(t.season_id, ''), t.id, COALESCE(opp.name, ''), COALESCE(m.name, ''), re.knocks
 		FROM participants p
 		JOIN tournaments t ON t.id = p.tournament_id
+		JOIN round_entries re ON re.participant_id = p.id
+		JOIN rounds r ON r.id = re.round_id
+		LEFT JOIN maps m ON m.code = re.map_code
 		LEFT JOIN LATERAL (
 		    SELECT p2.name FROM participants p2
 		    WHERE p2.tournament_id = t.id AND p2.id <> p.id
 		    ORDER BY p2.seed LIMIT 1
 		) opp ON true
-		WHERE p.user_id = $1 AND t.mode = '1x1' AND t.status = 'finished'
-		  AND EXISTS (SELECT 1 FROM rounds r JOIN round_entries re ON re.round_id = r.id
-		              WHERE r.tournament_id = t.id AND re.knocks > 0)
-		ORDER BY COALESCE(t.starts_at, t.created_at)`
+		WHERE p.user_id = $1 AND t.mode = '1x1' AND t.status = 'finished' AND ` + heatPlayed + `
+		ORDER BY COALESCE(t.starts_at, t.created_at), t.id, r.number`
 	rows, err := s.Pool.Query(ctx, q, userID)
 	if err != nil {
 		return nil, err
@@ -218,17 +189,17 @@ func (s *Store) Player1x1KnocksBySeason(ctx context.Context, userID string) (map
 	defer rows.Close()
 	out := map[string]models.KnockStats{}
 	for rows.Next() {
-		var season, matchID, opponent string
+		var season, matchID, opponent, mapName string
 		var knocks int
-		if err := rows.Scan(&season, &matchID, &opponent, &knocks); err != nil {
+		if err := rows.Scan(&season, &matchID, &opponent, &mapName, &knocks); err != nil {
 			return nil, err
 		}
 		k := out[season]
-		k.Matches++
+		k.Heats++
 		k.Knocks += knocks
-		// Матчи идут по порядку: при равенстве рекордом остаётся первый.
+		// Заходы идут по порядку: при равенстве рекордом остаётся первый.
 		if knocks > k.Best {
-			k.Best, k.BestMatch, k.BestOpponent = knocks, matchID, opponent
+			k.Best, k.BestMatch, k.BestOpponent, k.BestMap = knocks, matchID, opponent, mapName
 		}
 		out[season] = k
 	}
@@ -372,21 +343,25 @@ func (s *Store) TeamTimeline(ctx context.Context, teamKey string) ([]models.MmrP
 	return out, rows.Err()
 }
 
-// TeamMaps — разбивка матчей команды по картам (взвешенно по ×2); матч на нескольких картах
-// засчитан на каждую.
+// TeamMaps - заходы команды по картам за все сезоны.
 func (s *Store) TeamMaps(ctx context.Context, teamKey string) ([]models.MapStat, error) {
 	const q = `
-		SELECT ` + mapStatName + ` AS mp,
-		       COALESCE(SUM(t.games) FILTER (WHERE h.delta > 0), 0)::int AS wins,
-		       COALESCE(SUM(t.games) FILTER (WHERE h.delta < 0), 0)::int AS losses,
-		       COALESCE(SUM(t.games), 0)::int AS games
+		SELECT '', ` + heatMapCols + `
 		FROM team_mmr_history h
-		JOIN tournaments t ON t.id = h.tournament_id
-		` + matchMapsJoin + `
+		JOIN participants p ON p.tournament_id = h.tournament_id AND ` + teamKeyOf + ` = h.team_key
+		JOIN round_entries re ON re.participant_id = p.id
+		JOIN maps m ON m.code = re.map_code
 		WHERE h.team_key = $1
-		GROUP BY ` + mapStatKey + `
-		ORDER BY games DESC, mp`
-	return s.scanMapStats(ctx, q, teamKey)
+		GROUP BY m.name
+		ORDER BY 3 DESC, m.name`
+	bySeason, err := s.scanHeatMaps(ctx, q, teamKey)
+	if err != nil {
+		return nil, err
+	}
+	if out := bySeason[""]; out != nil {
+		return out, nil
+	}
+	return []models.MapStat{}, nil
 }
 
 // TeamOpponents — head-to-head команды против других команд (взвешенно по ×2).
@@ -425,38 +400,18 @@ func (s *Store) TeamOpponents(ctx context.Context, teamKey string) ([]models.Opp
 	return out, rows.Err()
 }
 
-// TeamMapsBySeason - разбивка матчей команды по картам в каждом сезоне (взвешенно по ×2); матч на
-// нескольких картах засчитан на каждую. Ключ - сезон, пусто - матчи вне сезонов.
+// TeamMapsBySeason - заходы команды по картам в каждом сезоне. Ключ - сезон, пусто - матчи вне сезонов.
 func (s *Store) TeamMapsBySeason(ctx context.Context, teamKey string) (map[string][]models.MapStat, error) {
 	const q = `
-		SELECT COALESCE(h.season_key, '') AS season, ` + mapStatName + ` AS mp,
-		       COALESCE(SUM(t.games) FILTER (WHERE h.delta > 0), 0)::int AS wins,
-		       COALESCE(SUM(t.games) FILTER (WHERE h.delta < 0), 0)::int AS losses,
-		       COALESCE(SUM(t.games), 0)::int AS games
+		SELECT COALESCE(h.season_key, ''), ` + heatMapCols + `
 		FROM team_mmr_history h
-		JOIN tournaments t ON t.id = h.tournament_id
-		` + matchMapsJoin + `
+		JOIN participants p ON p.tournament_id = h.tournament_id AND ` + teamKeyOf + ` = h.team_key
+		JOIN round_entries re ON re.participant_id = p.id
+		JOIN maps m ON m.code = re.map_code
 		WHERE h.team_key = $1
-		GROUP BY season, ` + mapStatKey + `
-		ORDER BY season, games DESC, mp`
-	rows, err := s.Pool.Query(ctx, q, teamKey)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	out := map[string][]models.MapStat{}
-	for rows.Next() {
-		var season string
-		var m models.MapStat
-		if err := rows.Scan(&season, &m.Map, &m.Wins, &m.Losses, &m.Games); err != nil {
-			return nil, err
-		}
-		if m.Map == "" {
-			m.Map = noMapName
-		}
-		out[season] = append(out[season], m)
-	}
-	return out, rows.Err()
+		GROUP BY 1, m.name
+		ORDER BY 1, 3 DESC, m.name`
+	return s.scanHeatMaps(ctx, q, teamKey)
 }
 
 // TeamOpponentsBySeason - соперники команды в каждом сезоне (взвешенно по ×2), частые сверху.
@@ -517,22 +472,25 @@ func (s *Store) scanTimeline(ctx context.Context, q, arg string) ([]models.MmrPo
 	return out, rows.Err()
 }
 
-func (s *Store) scanMapStats(ctx context.Context, q, arg string) ([]models.MapStat, error) {
+// scanHeatMaps читает разбор заходов по картам: сезон и колонки heatMapCols.
+func (s *Store) scanHeatMaps(ctx context.Context, q, arg string) (map[string][]models.MapStat, error) {
 	rows, err := s.Pool.Query(ctx, q, arg)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	out := []models.MapStat{}
+	out := map[string][]models.MapStat{}
 	for rows.Next() {
+		var season string
 		var m models.MapStat
-		if err := rows.Scan(&m.Map, &m.Wins, &m.Losses, &m.Games); err != nil {
+		var avg *float64
+		if err := rows.Scan(&season, &m.Map, &m.Heats, &m.Knocks, &m.Placed, &avg, &m.Chickens); err != nil {
 			return nil, err
 		}
-		if m.Map == "" {
-			m.Map = noMapName
+		if avg != nil {
+			m.AvgPlace = math.Round(*avg*10) / 10
 		}
-		out = append(out, m)
+		out[season] = append(out[season], m)
 	}
 	return out, rows.Err()
 }

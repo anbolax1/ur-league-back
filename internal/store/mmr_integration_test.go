@@ -206,8 +206,9 @@ func TestMMRIntegration(t *testing.T) {
 		t.Errorf("player a timeline/seasons len = %d/%d, want 1/1", len(tl1), len(an1))
 	}
 	for season, sa := range an1 {
-		if len(sa.Maps) != 1 || len(sa.Opponents) != 1 {
-			t.Errorf("player a season %q maps/opps len = %d/%d, want 1/1", season, len(sa.Maps), len(sa.Opponents))
+		// в матче не было заходов с картой - разбора по картам нет
+		if len(sa.Maps) != 0 || len(sa.Opponents) != 1 {
+			t.Errorf("player a season %q maps/opps len = %d/%d, want 0/1", season, len(sa.Maps), len(sa.Opponents))
 		}
 		if len(sa.Opponents) == 1 && sa.Opponents[0].Login != b.Login {
 			t.Errorf("player a opponent login = %q, want %q", sa.Opponents[0].Login, b.Login)

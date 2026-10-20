@@ -150,6 +150,9 @@ func (s *Store) PlayerHistory(ctx context.Context, userID string) ([]models.Play
 	return out, rows.Err()
 }
 
+// topPlaces - «топ-5» в карточке игрока: место в заходе не ниже пятого.
+const topPlaces = 5
+
 // PlayerAggregate — расширенная статистика игрока по завершённым турнирам:
 // источники очков (суммы разбивки по всем участиям) + любимая карта.
 // Винрейт по режимам и серия считаются в хендлере из истории. Если игрок ещё
@@ -194,16 +197,28 @@ func (s *Store) PlayerAggregate(ctx context.Context, userID string) (models.Play
 		st.LegendaryPoints += b.Legendary
 	}
 
-	// Места в заходах: лучшее, среднее и чикены - первые места.
+	// Места в заходах: лучшее, среднее, чикены - первые места - и топ-5.
 	var avg *float64
 	if err := s.Pool.QueryRow(ctx, `
-		SELECT COUNT(place)::int, COALESCE(MIN(place), 0)::int, AVG(place)::float8, COUNT(*) FILTER (WHERE place = 1)::int
-		FROM round_entries WHERE participant_id = ANY($1) AND place IS NOT NULL`, pids).
-		Scan(&st.PlacedHeats, &st.BestPlace, &avg, &st.Chickens); err != nil {
+		SELECT COUNT(place)::int, COALESCE(MIN(place), 0)::int, AVG(place)::float8,
+		       (COUNT(*) FILTER (WHERE place = 1))::int, (COUNT(*) FILTER (WHERE place <= $2))::int
+		FROM round_entries WHERE participant_id = ANY($1) AND place IS NOT NULL`, pids, topPlaces).
+		Scan(&st.PlacedHeats, &st.BestPlace, &avg, &st.Chickens, &st.Top5); err != nil {
 		return st, err
 	}
 	if avg != nil {
 		st.AvgPlace = math.Round(*avg*10) / 10
+	}
+
+	// Задания стороны: выдано ей, выполнено своих и чужих; легендарки - отдельным счётом.
+	if err := s.Pool.QueryRow(ctx, `
+		SELECT (COUNT(*) FILTER (WHERE participant_id = ANY($1)))::int,
+		       (COUNT(*) FILTER (WHERE participant_id = ANY($1) AND completed_by = participant_id))::int,
+		       (COUNT(*) FILTER (WHERE completed_by = ANY($1) AND completed_by <> participant_id))::int,
+		       (SELECT COUNT(*) FROM legendary_contract_completions WHERE participant_id = ANY($1))::int
+		FROM round_bonus_tasks WHERE participant_id = ANY($1) OR completed_by = ANY($1)`, pids).
+		Scan(&st.TasksOffered, &st.TasksDone, &st.TasksCross, &st.Legendaries); err != nil {
+		return st, err
 	}
 
 	// любимая карта — где у игрока больше всего заходов
