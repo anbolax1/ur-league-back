@@ -27,6 +27,8 @@ type sideSpec struct {
 	total         int
 	before, after int
 	knocks        map[int]int
+	maps          map[int]string // карты заходов по раундам
+	places        map[int]int    // места в заходах по раундам
 	round1        int
 }
 
@@ -35,7 +37,7 @@ func (c *patchCase) match(winner int, a, b sideSpec, opts ...func(*patchMatch)) 
 	c.total++
 	m := patchMatch{
 		id: "m" + string(rune('a'+c.total-1)), at: c.day.Add(time.Duration(c.n) * time.Hour),
-		mult: 1, games: 1, winner: winner, roundMaps: map[int]string{1: "Мирамар", 2: "Эрангель"},
+		mult: 1, games: 1, winner: winner,
 	}
 	for i, sp := range []sideSpec{a, b} {
 		k := sp.knocks
@@ -43,7 +45,7 @@ func (c *patchCase) match(winner int, a, b sideSpec, opts ...func(*patchMatch)) 
 			k = map[int]int{}
 		}
 		m.sides[i] = patchSide{pid: m.id + sp.user, user: sp.user, name: sp.user, total: sp.total, rated: true,
-			before: sp.before, after: sp.after, knocks: k, round1: sp.round1, hasRound1: sp.round1 > 0}
+			before: sp.before, after: sp.after, knocks: k, heatMaps: sp.maps, places: sp.places, round1: sp.round1, hasRound1: sp.round1 > 0}
 	}
 	for _, o := range opts {
 		o(&m)
@@ -117,6 +119,44 @@ func TestPatchKnocks(t *testing.T) {
 	}
 	if _, ok := awardsOf(all, "od")["pacifist1"]; ok {
 		t.Fatalf("у победителя с киллами «Пацифиста» нет")
+	}
+}
+
+func TestPatchKingAndChicken(t *testing.T) {
+	c := newPatchCase("finished")
+	er, mi := "Эрангель", "Мирамар"
+	// на Эрангеле у cheb больше киллов, но заходов на нём только два - король od
+	c.match(0, sideSpec{user: "od", total: 10, knocks: map[int]int{1: 2, 2: 3}, maps: map[int]string{1: er, 2: er}, places: map[int]int{1: 4, 2: 1}},
+		sideSpec{user: "cheb", total: 8, knocks: map[int]int{1: 5, 2: 4}, maps: map[int]string{1: er, 2: er}, places: map[int]int{1: 2, 2: 3}})
+	c.match(0, sideSpec{user: "od", total: 6, knocks: map[int]int{1: 1}, maps: map[int]string{1: er, 2: mi}},
+		sideSpec{user: "takens", total: 4, knocks: map[int]int{1: 2, 2: 2}, maps: map[int]string{1: mi, 2: mi}})
+	// на Мирамаре у cheb и takens по три захода и по 4 килла - короли оба
+	c.match(0, sideSpec{user: "cheb", total: 9, knocks: map[int]int{1: 1, 2: 1, 3: 2}, maps: map[int]string{1: mi, 2: mi, 3: mi}},
+		sideSpec{user: "takens", total: 2, maps: map[int]string{1: mi}})
+	live := c.match(-1, sideSpec{user: "orochi", maps: map[int]string{1: mi}, places: map[int]int{1: 1}}, sideSpec{user: "od"})
+	live.live = true
+	all := computeSeasonPatches(c.in)
+
+	kingMaps := func(user string) []string {
+		m, _ := awardsOf(all, user)["king1"].detail["maps"].([]string)
+		return m
+	}
+	if m := kingMaps("od"); len(m) != 1 || m[0] != er || awardsOf(all, "od")["king1"].detail["knocks"] != 6 {
+		t.Fatalf("«Король карты» Эрангеля - od с 6 киллами за три захода: %+v", awardsOf(all, "od")["king1"])
+	}
+	for _, u := range []string{"cheb", "takens"} {
+		if m := kingMaps(u); len(m) != 1 || m[0] != mi {
+			t.Fatalf("«Король карты» Мирамара при равных киллах - оба, %s: %v", u, m)
+		}
+	}
+	if a, ok := awardsOf(all, "od")["chicken1"]; !ok || a.match != "ma" || a.detail["map"] != er || a.detail["n"] != 1 {
+		t.Fatalf("1-е место во втором заходе - «Чикен» в этом матче: %+v", a)
+	}
+	if a, ok := awardsOf(all, "orochi")["chicken1"]; !ok || a.match != live.id {
+		t.Fatalf("место вводят сразу после захода - «Чикен» и в идущем матче: %+v", a)
+	}
+	if _, ok := awardsOf(all, "cheb")["chicken1"]; ok {
+		t.Fatalf("без первого места «Чикена» нет")
 	}
 }
 

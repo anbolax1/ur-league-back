@@ -7,7 +7,6 @@ import (
 	"math"
 	"sort"
 	"strconv"
-	"strings"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -21,7 +20,7 @@ import (
 var PatchCodes = []string{
 	"top1", "belt", "regicide",
 	"streak", "flawless", "david", "comeback", "double", "photo", "shutout", "revenge",
-	"hunter", "clear", "topknock", "pacifist", "king",
+	"hunter", "clear", "topknock", "pacifist", "king", "chicken",
 	"first", "final", "marathon", "veteran",
 }
 
@@ -30,7 +29,7 @@ const (
 	patchFlawlessWins = 5   // «Без поражений»: побед за сезон без единого поражения
 	patchUnderdog     = 0.4 // «Против шансов»: шанс победы по рейтингу не выше этого
 	patchClearKnocks  = 8   // «Зачистка»: киллов за один заход
-	patchKingWins     = 3   // «Король карты»: меньше побед на карте - не король
+	patchKingHeats    = 3   // «Король карты»: меньше заходов на карте - не король
 	patchMarathon     = 20  // «Марафонец»: матчей за сезон
 )
 
@@ -45,7 +44,9 @@ type patchSide struct {
 	total           int
 	rated           bool // у матча есть изменение MMR этой стороны
 	before, after   int
-	knocks          map[int]int // киллы по номерам раундов
+	knocks          map[int]int    // киллы по номерам раундов
+	heatMaps        map[int]string // карта захода стороны по номерам раундов
+	places          map[int]int    // место в заходе по номерам раундов
 	round1          int
 	hasRound1       bool
 }
@@ -58,8 +59,6 @@ type patchMatch struct {
 	mult, games int
 	winner      int // сторона-победитель; -1 - ничья
 	sides       [2]patchSide
-	maps        []string       // карты матча для «Короля карты»
-	roundMaps   map[int]string // карта каждого раунда
 }
 
 // patchMmrFix - сверка рейтинга между матчами: от неё зависит, кто лидер таблицы.
@@ -92,10 +91,10 @@ type patchAward struct {
 type patchPlayer struct {
 	wins, losses, games, played int
 	streak, bestStreak          int
-	knocks                      int
+	knocks, chickens            int
 	david, comeback, double     int
 	lostTo                      map[string]bool
-	mapWins                     map[string]int
+	mapHeats, mapKnocks         map[string]int // заходы и киллы на каждой карте - для «Короля карты»
 	bestRound                   map[string]any
 	bestRoundKnocks             int
 }
@@ -122,7 +121,7 @@ func computeSeasonPatches(in patchInput) []patchAward {
 	get := func(u string) *patchPlayer {
 		p := players[u]
 		if p == nil {
-			p = &patchPlayer{lostTo: map[string]bool{}, mapWins: map[string]int{}}
+			p = &patchPlayer{lostTo: map[string]bool{}, mapHeats: map[string]int{}, mapKnocks: map[string]int{}}
 			players[u] = p
 		}
 		return p
@@ -221,10 +220,22 @@ func computeSeasonPatches(in patchInput) []patchAward {
 				}
 				if k > p.bestRoundKnocks {
 					p.bestRoundKnocks = k
-					p.bestRound = map[string]any{"knocks": k, "map": m.roundMaps[rn], "opp": m.sides[1-i].name}
+					p.bestRound = map[string]any{"knocks": k, "map": sd.heatMaps[rn], "opp": m.sides[1-i].name}
 				}
 				if k >= patchClearKnocks {
 					award(sd.user, "clear", 1, m.id, m.at, nil)
+				}
+			}
+			// Место ведущий вводит сразу после захода, поэтому «Чикен» тоже выдаётся прямо в эфире.
+			placed := make([]int, 0, len(sd.places))
+			for rn := range sd.places {
+				placed = append(placed, rn)
+			}
+			sort.Ints(placed)
+			for _, rn := range placed {
+				if sd.places[rn] == 1 {
+					p.chickens++
+					award(sd.user, "chicken", 1, m.id, m.at, map[string]any{"map": sd.heatMaps[rn], "opp": m.sides[1-i].name})
 				}
 			}
 		}
@@ -250,6 +261,10 @@ func computeSeasonPatches(in patchInput) []patchAward {
 			p.games += max(m.games, 1)
 			if before < patchMarathon && p.games >= patchMarathon {
 				award(sd.user, "marathon", 1, m.id, m.at, nil)
+			}
+			for rn, mp := range sd.heatMaps {
+				p.mapHeats[mp]++
+				p.mapKnocks[mp] += sd.knocks[rn]
 			}
 		}
 
@@ -305,9 +320,6 @@ func computeSeasonPatches(in patchInput) []patchAward {
 			if in.belt.takes[m.id] == w.user {
 				award(w.user, "belt", 1, m.id, m.at, nil)
 			}
-			for _, mp := range m.maps {
-				pw.mapWins[mp]++
-			}
 		}
 		for _, sd := range m.sides {
 			if sd.user != "" && sd.rated {
@@ -351,10 +363,14 @@ func computeSeasonPatches(in patchInput) []patchAward {
 				seasonal(u, "topknock", map[string]any{"knocks": p.knocks})
 			}
 		}
+		// «Король карты» - больше всех киллов на карте среди тех, у кого на ней хватает заходов.
 		best := map[string]int{}
 		for _, u := range users {
-			for mp, n := range players[u].mapWins {
-				best[mp] = max(best[mp], n)
+			p := players[u]
+			for mp, n := range p.mapKnocks {
+				if p.mapHeats[mp] >= patchKingHeats {
+					best[mp] = max(best[mp], n)
+				}
 			}
 		}
 		maps := make([]string, 0, len(best))
@@ -363,18 +379,19 @@ func computeSeasonPatches(in patchInput) []patchAward {
 		}
 		sort.Strings(maps)
 		for _, mp := range maps {
-			if best[mp] < patchKingWins {
+			if best[mp] == 0 {
 				continue
 			}
 			for _, u := range users {
-				if players[u].mapWins[mp] != best[mp] {
+				p := players[u]
+				if p.mapHeats[mp] < patchKingHeats || p.mapKnocks[mp] != best[mp] {
 					continue
 				}
 				if kings[u] == nil {
-					kings[u] = map[string]any{"maps": []string{}, "wins": 0}
+					kings[u] = map[string]any{"maps": []string{}, "knocks": 0}
 				}
 				kings[u]["maps"] = append(kings[u]["maps"].([]string), mp)
-				kings[u]["wins"] = max(kings[u]["wins"].(int), best[mp])
+				kings[u]["knocks"] = max(kings[u]["knocks"].(int), best[mp])
 			}
 		}
 		for _, u := range users {
@@ -413,6 +430,8 @@ func computeSeasonPatches(in patchInput) []patchAward {
 			a.detail = map[string]any{"knocks": p.knocks}
 		case "clear":
 			a.detail = p.bestRound
+		case "chicken":
+			a.detail["n"] = p.chickens
 		case "marathon":
 			a.detail = map[string]any{"games": p.games}
 		case "veteran":
@@ -427,11 +446,6 @@ func computeSeasonPatches(in patchInput) []patchAward {
 	return out
 }
 
-// patchMapKey - в старых сезонах карты набраны капсом и без «ё»: одна карта - один ключ.
-func patchMapKey(name string) string {
-	return strings.ReplaceAll(strings.ToUpper(strings.TrimSpace(name)), "Ё", "Е")
-}
-
 // loadPatchInput собирает матчи сезона с рейтингом до и после, очками, киллами и картами.
 func (s *Store) loadPatchInput(ctx context.Context, sn models.Season, prev *models.Season) (patchInput, error) {
 	in := patchInput{season: sn, prevGames: map[string]int{}}
@@ -439,7 +453,7 @@ func (s *Store) loadPatchInput(ctx context.Context, sn models.Season, prev *mode
 
 	rows, err := s.Pool.Query(ctx, `
 		SELECT t.id, COALESCE(t.starts_at, t.created_at), t.status, t.format = 'show', t.rating_multiplier, t.games,
-		       COALESCE(t.winner_participant_id, ''), t.maps
+		       COALESCE(t.winner_participant_id, '')
 		FROM tournaments t WHERE `+scope+`
 		ORDER BY 2, t.created_at, t.id`, sn.ID)
 	if err != nil {
@@ -447,20 +461,15 @@ func (s *Store) loadPatchInput(ctx context.Context, sn models.Season, prev *mode
 	}
 	byID := map[string]*patchMatch{}
 	winners := map[string]string{}
-	listMaps := map[string][]string{}
 	var matches []*patchMatch
 	for rows.Next() {
-		m := &patchMatch{winner: -1, roundMaps: map[int]string{}}
+		m := &patchMatch{winner: -1}
 		var status, winner string
-		var maps []byte
-		if err := rows.Scan(&m.id, &m.at, &status, &m.show, &m.mult, &m.games, &winner, &maps); err != nil {
+		if err := rows.Scan(&m.id, &m.at, &status, &m.show, &m.mult, &m.games, &winner); err != nil {
 			rows.Close()
 			return in, err
 		}
 		m.live = status == "live"
-		var names []string
-		_ = json.Unmarshal(maps, &names)
-		listMaps[m.id] = names
 		winners[m.id] = winner
 		byID[m.id] = m
 		matches = append(matches, m)
@@ -485,7 +494,7 @@ func (s *Store) loadPatchInput(ctx context.Context, sn models.Season, prev *mode
 	side := map[string]*patchSide{}
 	for rows.Next() {
 		var tid string
-		sd := patchSide{knocks: map[int]int{}}
+		sd := patchSide{knocks: map[int]int{}, heatMaps: map[int]string{}, places: map[int]int{}}
 		if err := rows.Scan(&tid, &sd.pid, &sd.user, &sd.total, &sd.name); err != nil {
 			rows.Close()
 			return in, err
@@ -540,47 +549,35 @@ func (s *Store) loadPatchInput(ctx context.Context, sn models.Season, prev *mode
 	}
 
 	rows, err = s.Pool.Query(ctx, `
-		SELECT r.tournament_id, r.number, r.map
-		FROM rounds r JOIN tournaments t ON t.id = r.tournament_id
-		WHERE `+scope+` AND r.map <> '' AND r.status <> 'pending'
-		ORDER BY r.tournament_id, r.number`, sn.ID)
-	if err != nil {
-		return in, err
-	}
-	for rows.Next() {
-		var tid, mp string
-		var n int
-		if err := rows.Scan(&tid, &n, &mp); err != nil {
-			rows.Close()
-			return in, err
-		}
-		if m := byID[tid]; m != nil {
-			m.roundMaps[n] = mp
-		}
-	}
-	rows.Close()
-	if err := rows.Err(); err != nil {
-		return in, err
-	}
-
-	rows, err = s.Pool.Query(ctx, `
-		SELECT re.participant_id, r.number, re.knocks
+		SELECT re.participant_id, r.number, re.knocks, COALESCE(m.name, ''), re.place
 		FROM round_entries re
 		JOIN rounds r ON r.id = re.round_id
 		JOIN tournaments t ON t.id = r.tournament_id
-		WHERE `+scope+` AND re.knocks > 0`, sn.ID)
+		LEFT JOIN maps m ON m.code = re.map_code
+		WHERE `+scope+` AND `+heatPlayed, sn.ID)
 	if err != nil {
 		return in, err
 	}
 	for rows.Next() {
-		var pid string
+		var pid, mp string
 		var n, k int
-		if err := rows.Scan(&pid, &n, &k); err != nil {
+		var place *int
+		if err := rows.Scan(&pid, &n, &k, &mp, &place); err != nil {
 			rows.Close()
 			return in, err
 		}
-		if sd := side[pid]; sd != nil {
+		sd := side[pid]
+		if sd == nil {
+			continue
+		}
+		if k > 0 {
 			sd.knocks[n] += k
+		}
+		if mp != "" {
+			sd.heatMaps[n] = mp
+		}
+		if place != nil {
+			sd.places[n] = *place
 		}
 	}
 	rows.Close()
@@ -634,34 +631,7 @@ func (s *Store) loadPatchInput(ctx context.Context, sn models.Season, prev *mode
 		}
 	}
 
-	// Карты для «Короля карты» - как в разборе по картам в профиле: сыгранные раунды, иначе список матча.
-	names := map[string]string{}
 	for _, m := range matches {
-		src := make([]string, 0, len(m.roundMaps))
-		for _, mp := range m.roundMaps {
-			src = append(src, mp)
-		}
-		if len(src) == 0 {
-			src = listMaps[m.id]
-		}
-		seen := map[string]bool{}
-		for _, mp := range src {
-			key := patchMapKey(mp)
-			if key == "" || seen[key] {
-				continue
-			}
-			seen[key] = true
-			if cur, ok := names[key]; !ok || (cur == strings.ToUpper(cur) && mp != strings.ToUpper(mp)) {
-				names[key] = mp
-			}
-			m.maps = append(m.maps, key)
-		}
-	}
-	for _, m := range matches {
-		for i, key := range m.maps {
-			m.maps[i] = names[key]
-		}
-		sort.Strings(m.maps)
 		if m.sides[0].pid != "" && m.sides[1].pid != "" {
 			in.matches = append(in.matches, *m)
 		}

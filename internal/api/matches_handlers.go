@@ -537,6 +537,8 @@ func (s *Server) handleHeatPlace(w http.ResponseWriter, r *http.Request) {
 		_ = s.Store.AddMatchLog(r.Context(), id, rd.Number, &pid, "place", names[pid]+": "+placeText(b.Place), 0, map[string]any{
 			"type": "place", "roundId": rd.ID, "participantId": pid, "prevPlace": prev,
 		})
+		// «Чикен» выдаётся по месту сразу: плашка всплывает в оверлее прямо в эфире.
+		s.flashPatches(r.Context(), id, s.syncPatches(r.Context()))
 	}
 	s.writeMatch(w, r, id, http.StatusOK)
 }
