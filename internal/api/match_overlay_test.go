@@ -73,7 +73,7 @@ func TestHeatSideStartsFromSideA(t *testing.T) {
 	}
 }
 
-func TestMatchOverlayShowsMapOfHeat(t *testing.T) {
+func TestMatchOverlayShowsHeatOfSideInFrame(t *testing.T) {
 	tid, a, b := "t1", "pa", "pb"
 	st := models.MatchState{
 		Tournament:   models.Tournament{ID: tid, Participants: []models.Participant{{ID: a, Name: "EDEN", Seed: 1}, {ID: b, Name: "MAKAR", Seed: 2}}},
@@ -85,7 +85,12 @@ func TestMatchOverlayShowsMapOfHeat(t *testing.T) {
 			{RoundNumber: 2, ParticipantID: b, MapCode: "miramar", Map: "Мирамар"},
 		},
 	}
-	if ls := buildMatchLiveState(st, models.LiveState{TournamentID: &tid, CurrentParticipantID: &b}); ls.CurrentMap != "Мирамар" {
+	st.Knocks = []models.RoundKnocks{{RoundNumber: 1, ParticipantID: b, Knocks: 4}, {RoundNumber: 2, ParticipantID: a, Knocks: 1}, {RoundNumber: 2, ParticipantID: b, Knocks: 2}}
+	ls := buildMatchLiveState(st, models.LiveState{TournamentID: &tid, CurrentParticipantID: &b})
+	if ls.CurrentMap != "Мирамар" {
 		t.Fatalf("карта захода стороны в кадре: %q", ls.CurrentMap)
+	}
+	if ls.HeatKills != 2 {
+		t.Fatalf("киллы захода стороны в кадре: %d, want 2", ls.HeatKills)
 	}
 }

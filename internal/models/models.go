@@ -645,18 +645,13 @@ type Task struct {
 	Completed bool   `json:"completed"`
 }
 
-// LiveComplication — усложнение текущего раунда в оверлее (B3). Показывается, только
-// если задано (omitempty → отсутствует, когда усложнения нет).
+// LiveComplication — протокол стороны в кадре для оверлея: задание на время за +1.
 type LiveComplication struct {
-	Who       string `json:"who,omitempty"` // к кому применяется (имя стороны/участника)
-	Text      string `json:"text"`
-	Penalty   int    `json:"penalty"`
-	ValueType string `json:"valueType"`         // fixed | percent
-	Times     int    `json:"times"`             // сколько раз нарушено (0 — не нарушено)
-	Minutes   int    `json:"minutes,omitempty"` // минуты штрафа (= times); присутствует в JSON, чтобы переживать round-trip
-	Reward    int    `json:"reward,omitempty"`  // протокол 3 сезона: награда за выполнение (+1); 0 - старый протокол-штраф
-	Done      bool   `json:"done,omitempty"`    // протокол 3 сезона выполнен
-	Tag       string `json:"tag,omitempty"`     // тег задания-протокола
+	Who    string `json:"who,omitempty"` // имя стороны
+	Text   string `json:"text"`
+	Reward int    `json:"reward,omitempty"`
+	Done   bool   `json:"done,omitempty"`
+	Tag    string `json:"tag,omitempty"` // тег задания-протокола
 }
 
 // LiveStanding — сторона матча в оверлее с СУММАРНЫМИ очками (по всем раундам).
@@ -701,11 +696,13 @@ type LiveState struct {
 	CurrentMap           string            `json:"currentMap,omitempty"` // карта захода стороны в кадре
 	Stage                string            `json:"stage,omitempty"`      // ready | round | finished
 
-	// Богатые данные для модульных виджетов (Фаза 3). Заполняются «Эфиром»;
-	// пустые при дефолтном табло. Singular complication выше оставлен для совместимости.
-	RoundTasks    []Task             `json:"roundTasks,omitempty"`    // стартовые задания текущего раунда
-	BonusTasks    []LiveBonus        `json:"bonusTasks,omitempty"`    // бонусные фокусной стороны
-	Complications []LiveComplication `json:"complications,omitempty"` // протоколы: в матче - стороны в рейде, в старом пульте - обеих сторон
+	// Задания и протокол стороны в кадре для виджета «Задания V2».
+	BonusTasks    []LiveBonus        `json:"bonusTasks,omitempty"`
+	Complications []LiveComplication `json:"complications,omitempty"`
+
+	// Заход стороны в кадре: её киллы за этот заход и игроки - для виджетов «Киллы захода» и «В кадре».
+	HeatKills int           `json:"heatKills"`
+	InFrame   []FramePlayer `json:"inFrame,omitempty"`
 
 	// Кастомизируемая раскладка оверлея (модульные виджеты). Если nil — оверлей
 	// рендерит дефолтную раскладку (источник дефолта — фронт). Чтобы пуш раскладки
@@ -718,6 +715,12 @@ type LiveState struct {
 
 	// Матч идёт за пояс лиги: табло отмечает носителя, а после матча - итог.
 	Belt *LiveBelt `json:"belt,omitempty"`
+}
+
+// FramePlayer - игрок стороны в кадре: ник на сайте и ник в игре.
+type FramePlayer struct {
+	Name     string `json:"name"`
+	GameNick string `json:"gameNick,omitempty"`
 }
 
 // OverlayLayout — документ раскладки оверлея: набор независимых виджетов с
@@ -755,7 +758,7 @@ type OverlayPreset struct {
 // 1920×1080 (resolution-independent), чтобы раскладка не зависела от разрешения.
 type WidgetInstance struct {
 	ID             string          `json:"id"`
-	Type           string          `json:"type"`        // scoreboard|round|complications|standings|roundTasks|bonusTasks|text|logo
+	Type           string          `json:"type"`        // scoreboard|round|standings|tasksV2|kills|inFrame|text|logo
 	X              float64         `json:"x"`           // 0..1 — левый край
 	Y              float64         `json:"y"`           // 0..1 — верхний край
 	W              float64         `json:"w,omitempty"` // 0..1 — ширина (пусто = по контенту)

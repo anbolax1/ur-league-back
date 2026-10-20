@@ -64,12 +64,55 @@ func (s *Server) withHeatSide(ctx context.Context, st *models.MatchState) {
 func (s *Server) matchLiveState(ctx context.Context, st models.MatchState, stored models.LiveState) models.LiveState {
 	ls := buildMatchLiveState(st, stored)
 	s.addStandingRatings(ctx, st, &ls)
+	s.addFramePlayers(ctx, st, &ls)
 	if belt, err := s.Store.MatchBelt(ctx, st); err == nil {
 		ls.Belt = belt
 	} else {
 		log.Printf("пояс для оверлея: %v", err)
 	}
 	return ls
+}
+
+// addFramePlayers - игроки стороны, чей заход идёт: ник на сайте и ник в игре, в 2×2 - оба.
+func (s *Server) addFramePlayers(ctx context.Context, st models.MatchState, ls *models.LiveState) {
+	if ls.CurrentParticipantID == nil {
+		return
+	}
+	for _, p := range st.Tournament.Participants {
+		if p.ID != *ls.CurrentParticipantID {
+			continue
+		}
+		ids := []string{}
+		if p.UserID != nil {
+			ids = append(ids, *p.UserID)
+		}
+		var members []struct {
+			Name   string `json:"name"`
+			UserID string `json:"userId"`
+		}
+		if len(p.Members) > 0 && json.Unmarshal(p.Members, &members) == nil {
+			for _, m := range members {
+				if m.UserID != "" {
+					ids = append(ids, m.UserID)
+				} else if m.Name != "" {
+					ls.InFrame = append(ls.InFrame, models.FramePlayer{Name: m.Name})
+				}
+			}
+		}
+		for _, id := range ids {
+			if u, err := s.Store.GetUser(ctx, id); err == nil {
+				name := u.DisplayName
+				if name == "" {
+					name = u.Login
+				}
+				ls.InFrame = append(ls.InFrame, models.FramePlayer{Name: name, GameNick: u.GameNick})
+			}
+		}
+		if len(ls.InFrame) == 0 {
+			ls.InFrame = append(ls.InFrame, models.FramePlayer{Name: p.Name})
+		}
+		return
+	}
 }
 
 // addStandingRatings добавляет сторонам табло MMR и место в таблице сезона; у завершённого матча
@@ -178,6 +221,11 @@ func buildMatchLiveState(st models.MatchState, stored models.LiveState) models.L
 			ls.CurrentMap = h.Map
 		}
 	}
+	for _, k := range st.Knocks {
+		if k.RoundNumber == round && k.ParticipantID == focus.ID {
+			ls.HeatKills = k.Knocks
+		}
+	}
 	ls.CurrentParticipantID = &focus.ID
 	ls.CurrentName = focus.Name
 	ls.CurrentPoints = total[focus.ID]
@@ -197,8 +245,7 @@ func buildMatchLiveState(st models.MatchState, stored models.LiveState) models.L
 				continue
 			}
 			c := models.LiveComplication{
-				Who: nameOf[task.ParticipantID], Text: overlayTaskText(task), ValueType: models.ValueFixed,
-				Reward: task.Points, Done: done, Tag: task.Tag,
+				Who: nameOf[task.ParticipantID], Text: overlayTaskText(task), Reward: task.Points, Done: done, Tag: task.Tag,
 			}
 			ls.Complications = append(ls.Complications, c)
 			ls.Complication = &c
