@@ -8,8 +8,8 @@ import (
 	"github.com/ur-league/backend/internal/models"
 )
 
-// Маленький сезон на три игрока: матч из таблицы, подробный матч с жетоном ×2 и камбэком, сверка рейтинга
-// и ×2 из таблицы, после которого у двоих равный MMR.
+// Маленький сезон на три игрока: матч без заходов, подробный матч с жетоном ×2, камбэком, картами и местами
+// заходов, сверка рейтинга и ×2 без заходов, после которого у двоих равный MMR.
 func TestBuildRecap(t *testing.T) {
 	at := func(day, hour int) time.Time { return time.Date(2026, 8, day, hour, 0, 0, 0, moscow) }
 	in := recapInput{
@@ -19,15 +19,17 @@ func TestBuildRecap(t *testing.T) {
 		maps:   []models.MapInfo{{Code: "erangel", Name: "Эрангель"}, {Code: "miramar", Name: "Мирамар"}},
 		matches: []recapRaw{
 			{id: "m1", at: at(17, 15), mult: 1, games: 1, winner: 0, users: [2]string{"a", "b"},
-				rounds: []recapRawRound{{number: 1, mapCode: "erangel", played: true}}},
+				rounds: []recapRawRound{{number: 1, played: true}}},
 			{id: "m2", at: at(18, 19), mult: 2, games: 1, winner: 1, users: [2]string{"a", "g"}, total: [2]int{5, 9},
 				rounds: []recapRawRound{
-					{number: 1, mapCode: "erangel", played: true, entries: true, points: [2]int{5, 2}, knocks: [2]int{1, 0},
+					{number: 1, played: true, entries: true, maps: [2]string{"erangel", "miramar"}, places: [2]int{3, 1},
+						heats: [2]bool{true, true}, points: [2]int{5, 2}, knocks: [2]int{1, 0},
 						tasks: []recapRawTask{{side: 1, name: "Т", category: "task", doneBy: 1}, {side: 0, name: "П", category: "protocol", doneBy: -1}}},
-					{number: 2, mapCode: "miramar", played: true, entries: true, points: [2]int{0, 7}, knocks: [2]int{0, 2}},
+					{number: 2, played: true, entries: true, maps: [2]string{"miramar", "miramar"}, places: [2]int{0, 2},
+						heats: [2]bool{true, true}, points: [2]int{0, 7}, knocks: [2]int{0, 2}},
 				}},
 			{id: "m3", at: at(20, 15), mult: 2, games: 2, winner: 0, users: [2]string{"b", "g"},
-				rounds: []recapRawRound{{number: 1, mapCode: "miramar", played: true}}},
+				rounds: []recapRawRound{{number: 1, played: true}}},
 		},
 		history: []recapHist{
 			{user: "a", tournament: "m1", at: at(17, 15), delta: 50},
@@ -41,7 +43,8 @@ func TestBuildRecap(t *testing.T) {
 	}
 	r := buildRecap(in)
 
-	if s := r.Summary; s.Matches != 3 || s.Games != 4 || s.X2 != 2 || s.Detailed != 1 || s.GameDays != 3 || s.Knocks != 3 || s.Players != 3 {
+	if s := r.Summary; s.Matches != 3 || s.Games != 4 || s.X2 != 2 || s.Detailed != 1 || s.GameDays != 3 || s.Knocks != 3 ||
+		s.Players != 3 || s.Heats != 4 || s.Chickens != 1 {
 		t.Errorf("сводка: %+v", s)
 	}
 	// Равный MMR в таблице делят победы: у BETA их две за ×2 из таблицы.
@@ -84,14 +87,27 @@ func TestBuildRecap(t *testing.T) {
 		len(r.Tasks.Doers) != 1 || r.Tasks.Doers[0].Player != gamma {
 		t.Errorf("задания: %+v", r.Tasks)
 	}
-	if r.Maps[0].Rounds != 1 || r.Maps[1].Rounds != 1 {
+	// Карта у каждого захода своя: очки, киллы, места и задания стороны идут на её карту.
+	er := models.RecapMap{Code: "erangel", Name: "Эрангель", Heats: 1, Points: 5, Knocks: 1, TasksOffered: 1, Placed: 1, AvgPlace: 3}
+	mi := models.RecapMap{Code: "miramar", Name: "Мирамар", Heats: 3, Points: 9, Knocks: 2, TasksDone: 1, TasksOffered: 1,
+		Placed: 2, AvgPlace: 1.5, Chickens: 1}
+	if len(r.Maps) != 2 || r.Maps[0] != er || r.Maps[1] != mi {
 		t.Errorf("карты: %+v", r.Maps)
 	}
-	if r.BestKnock == nil || r.BestKnock.Player != gamma || r.BestKnock.Knocks != 2 {
-		t.Errorf("рекорд киллов: %+v", r.BestKnock)
+	alphaI := 2
+	if bk := r.BestKnock; bk == nil || *bk != (models.RecapBestKnock{Match: 1, Player: gamma, Knocks: 2, Round: 2, Map: "miramar"}) {
+		t.Errorf("рекорд захода: %+v", r.BestKnock)
 	}
-	if len(r.Rounds) != 2 || r.Rounds[0].Points != 7 || r.Rounds[1].Knocks != 2 {
-		t.Errorf("раунды: %+v", r.Rounds)
+	if k := r.Knockers; len(k) != 2 || k[0] != (models.RecapKnocker{Player: gamma, Knocks: 2, Heats: 2}) ||
+		k[1] != (models.RecapKnocker{Player: alphaI, Knocks: 1, Heats: 2}) {
+		t.Errorf("киллы по игрокам: %+v", r.Knockers)
+	}
+	if r.Places[0] != 1 || r.Places[1] != 1 || r.Places[2] != 1 || r.Places[3] != 0 {
+		t.Errorf("заходы по местам: %v", r.Places)
+	}
+	if p := r.Placers; len(p) != 2 || p[0] != (models.RecapPlacer{Player: gamma, Placed: 2, AvgPlace: 1.5, Chickens: 1, Top5: 2}) ||
+		p[1] != (models.RecapPlacer{Player: alphaI, Placed: 1, AvgPlace: 3, Top5: 1}) {
+		t.Errorf("места игроков: %+v", r.Placers)
 	}
 	if r.Weekday[0] != 1 || r.Weekday[1] != 1 || r.Weekday[3] != 1 || r.Hours[19] != 1 {
 		t.Errorf("дни недели %v, часы %v", r.Weekday, r.Hours)

@@ -123,12 +123,13 @@ func (s *Store) loadRecap(ctx context.Context, sn models.Season) (recapInput, er
 		return in, err
 	}
 
-	// Раунды и очки сторон в них.
+	// Раунды и заходы сторон в них: очки, киллы, карта и место.
 	type roundRef struct{ match, round int }
 	roundOf := map[string]roundRef{}
 	rows, err = s.Pool.Query(ctx, `
-		SELECT r.tournament_id, r.id, r.number, COALESCE(r.map_code, ''), r.status <> 'pending',
-		       COALESCE(e.participant_id, ''), COALESCE(e.points, 0), COALESCE(e.knocks, 0)
+		SELECT r.tournament_id, r.id, r.number, r.status <> 'pending',
+		       COALESCE(e.participant_id, ''), COALESCE(e.points, 0), COALESCE(e.knocks, 0),
+		       COALESCE(e.map_code, ''), e.place
 		FROM rounds r JOIN tournaments t ON t.id = r.tournament_id
 		LEFT JOIN round_entries e ON e.round_id = r.id
 		WHERE `+seasonMatches+`
@@ -137,10 +138,11 @@ func (s *Store) loadRecap(ctx context.Context, sn models.Season) (recapInput, er
 		return in, err
 	}
 	for rows.Next() {
-		var tid, rid, code, pid string
+		var tid, rid, pid, code string
 		var number, points, knocks int
 		var played bool
-		if err := rows.Scan(&tid, &rid, &number, &code, &played, &pid, &points, &knocks); err != nil {
+		var place *int
+		if err := rows.Scan(&tid, &rid, &number, &played, &pid, &points, &knocks, &code, &place); err != nil {
 			rows.Close()
 			return in, err
 		}
@@ -152,12 +154,19 @@ func (s *Store) loadRecap(ctx context.Context, sn models.Season) (recapInput, er
 		if !ok {
 			ref = roundRef{mi, len(in.matches[mi].rounds)}
 			roundOf[rid] = ref
-			in.matches[mi].rounds = append(in.matches[mi].rounds, recapRawRound{number: number, mapCode: code, played: played})
+			in.matches[mi].rounds = append(in.matches[mi].rounds, recapRawRound{number: number, played: played})
 		}
 		if sd, ok := side[pid]; ok && sd[0] == mi {
 			r := &in.matches[mi].rounds[ref.round]
-			r.points[sd[1]] += points
-			r.knocks[sd[1]] += knocks
+			s := sd[1]
+			r.points[s] += points
+			r.knocks[s] += knocks
+			r.maps[s] = code
+			if place != nil {
+				r.places[s] = *place
+			}
+			// заход сыгран, как в статистике игрока: есть карта, место или киллы
+			r.heats[s] = code != "" || place != nil || knocks > 0
 			r.entries = true
 		}
 	}

@@ -47,8 +47,10 @@ type recapRaw struct {
 
 type recapRawRound struct {
 	number  int
-	mapCode string
 	played  bool
+	maps    [2]string // карты заходов сторон
+	places  [2]int    // места в заходах, 0 - не записано
+	heats   [2]bool   // заход стороны сыгран
 	points  [2]int
 	knocks  [2]int
 	entries bool
@@ -72,7 +74,7 @@ type recapHist struct {
 	before     int
 }
 
-// detailed - у матча есть раунды со счётом или задания; у матчей из таблицы организатора только итог и карта.
+// detailed - у матча есть заходы со счётом или задания; у остальных только итог.
 func (m recapRaw) detailed() bool {
 	for _, r := range m.rounds {
 		if r.entries || len(r.tasks) > 0 {
@@ -205,9 +207,6 @@ func buildRecap(in recapInput) models.SeasonRecap {
 				a.low = a.mmr
 			}
 		}
-		if st.corr {
-			out.Summary.Corrections = append(out.Summary.Corrections, models.RecapCorrection{At: st.at, Players: len(st.rows)})
-		}
 	}
 
 	// Места - как в таблице лидеров сайта: MMR, затем победы.
@@ -251,12 +250,13 @@ func buildRecap(in recapInput) models.SeasonRecap {
 		mapIdx[mi.Code] = len(out.Maps)
 		out.Maps = append(out.Maps, models.RecapMap{Code: mi.Code, Name: mi.Name})
 	}
-	roundStat := map[int]*models.RecapRoundStat{}
+	mapPlaceSum := make([]int, len(out.Maps))
 	type taskKey struct{ name, category, mapCode string }
 	taskStat := map[taskKey]*models.RecapTask{}
 	var taskOrder []taskKey
 	doneBy, offeredTo := map[int]int{}, map[int]int{}
-	knocks, knockMatches := map[int]int{}, map[int]int{}
+	knocks, knockHeats := map[int]int{}, map[int]int{}
+	placers, placeSum := map[int]*models.RecapPlacer{}, map[int]int{}
 	type pairKey struct{ a, b int }
 	pairs := map[pairKey][2]int{}
 	var pairOrder []pairKey
@@ -287,34 +287,65 @@ func buildRecap(in recapInput) models.SeasonRecap {
 		if m.mult > 1 {
 			out.Summary.X2++
 		}
-		withKnocks := false
 		for _, r := range m.rounds {
-			rm.Rounds = append(rm.Rounds, models.RecapRound{Map: r.mapCode, Played: r.played, Points: r.points, Knocks: r.knocks})
-			if r.knocks[0]+r.knocks[1] > 0 {
-				withKnocks = true
-			}
+			rm.Rounds = append(rm.Rounds, models.RecapRound{Maps: r.maps, Places: r.places, Played: r.played, Points: r.points, Knocks: r.knocks})
 			if !det || !r.played {
 				continue
 			}
-			rs := roundStat[r.number]
-			if rs == nil {
-				rs = &models.RecapRoundStat{Number: r.number}
-				roundStat[r.number] = rs
-			}
-			rs.Rounds++
-			rs.Points += r.points[0] + r.points[1]
-			rs.Knocks += r.knocks[0] + r.knocks[1]
-			var mp *models.RecapMap
-			if i, ok := mapIdx[r.mapCode]; ok {
-				mp = &out.Maps[i]
-				mp.Rounds++
-				mp.Points += r.points[0] + r.points[1]
-				mp.Knocks += r.knocks[0] + r.knocks[1]
+			// У каждой стороны свой заход: очки, киллы и место идут на карту этого захода.
+			for s := 0; s < 2; s++ {
+				if !r.heats[s] {
+					continue
+				}
+				p := idx[m.users[s]]
+				k := r.knocks[s]
+				out.Summary.Heats++
+				out.Summary.Knocks += k
+				knocks[p] += k
+				knockHeats[p]++
+				if k > 0 && (out.BestKnock == nil || k > out.BestKnock.Knocks) {
+					out.BestKnock = &models.RecapBestKnock{Match: mi, Player: p, Knocks: k, Round: r.number, Map: r.maps[s]}
+				}
+				mapAt, onMap := mapIdx[r.maps[s]]
+				if onMap {
+					mp := &out.Maps[mapAt]
+					mp.Heats++
+					mp.Points += r.points[s]
+					mp.Knocks += k
+				}
+				place := r.places[s]
+				if place <= 0 {
+					continue
+				}
+				out.Places[place-1]++
+				pr := placers[p]
+				if pr == nil {
+					pr = &models.RecapPlacer{Player: p}
+					placers[p] = pr
+				}
+				pr.Placed++
+				placeSum[p] += place
+				if place <= topPlaces {
+					pr.Top5++
+				}
+				if place == 1 {
+					pr.Chickens++
+					out.Summary.Chickens++
+				}
+				if onMap {
+					mp := &out.Maps[mapAt]
+					mp.Placed++
+					mapPlaceSum[mapAt] += place
+					if place == 1 {
+						mp.Chickens++
+					}
+				}
 			}
 			for _, t := range r.tasks {
 				done := t.doneBy >= 0
-				rs.TasksOffered++
-				if mp != nil {
+				var mp *models.RecapMap
+				if i, ok := mapIdx[r.maps[t.side]]; ok {
+					mp = &out.Maps[i]
 					mp.TasksOffered++
 				}
 				owner := idx[m.users[t.side]]
@@ -337,7 +368,6 @@ func buildRecap(in recapInput) models.SeasonRecap {
 				}
 				ts.Offered++
 				if done {
-					rs.TasksDone++
 					if mp != nil {
 						mp.TasksDone++
 					}
@@ -345,21 +375,6 @@ func buildRecap(in recapInput) models.SeasonRecap {
 					out.Tasks.All[0]++
 					ts.Done++
 					doneBy[idx[m.users[t.doneBy]]]++
-				}
-			}
-		}
-		if withKnocks {
-			for s := 0; s < 2; s++ {
-				k := 0
-				for _, r := range m.rounds {
-					k += r.knocks[s]
-				}
-				p := idx[m.users[s]]
-				knocks[p] += k
-				knockMatches[p]++
-				out.Summary.Knocks += k
-				if out.BestKnock == nil || k > out.BestKnock.Knocks {
-					out.BestKnock = &models.RecapBestKnock{Match: mi, Player: p, Knocks: k}
 				}
 			}
 		}
@@ -427,9 +442,29 @@ func buildRecap(in recapInput) models.SeasonRecap {
 		return out.Rivals[i].WinsA+out.Rivals[i].WinsB > out.Rivals[j].WinsA+out.Rivals[j].WinsB
 	})
 
+	for i := range out.Maps {
+		if n := out.Maps[i].Placed; n > 0 {
+			out.Maps[i].AvgPlace = math.Round(float64(mapPlaceSum[i])/float64(n)*10) / 10
+		}
+	}
+	for p, pr := range placers {
+		pr.AvgPlace = math.Round(float64(placeSum[p])/float64(pr.Placed)*10) / 10
+		out.Placers = append(out.Placers, *pr)
+	}
+	sort.Slice(out.Placers, func(i, j int) bool {
+		a, b := out.Placers[i], out.Placers[j]
+		if a.Chickens != b.Chickens {
+			return a.Chickens > b.Chickens
+		}
+		if a.AvgPlace != b.AvgPlace {
+			return a.AvgPlace < b.AvgPlace
+		}
+		return a.Player < b.Player
+	})
+
 	for p, k := range knocks {
 		if k > 0 {
-			out.Knockers = append(out.Knockers, models.RecapKnocker{Player: p, Knocks: k, Matches: knockMatches[p]})
+			out.Knockers = append(out.Knockers, models.RecapKnocker{Player: p, Knocks: k, Heats: knockHeats[p]})
 		}
 	}
 	sort.Slice(out.Knockers, func(i, j int) bool {
@@ -440,12 +475,6 @@ func buildRecap(in recapInput) models.SeasonRecap {
 		return a.Player < b.Player
 	})
 	out.Knockers = out.Knockers[:min(recapKnockersLen, len(out.Knockers))]
-
-	for _, n := range []int{1, 2, 3} {
-		if rs := roundStat[n]; rs != nil {
-			out.Rounds = append(out.Rounds, *rs)
-		}
-	}
 
 	var tasks []models.RecapTask
 	for _, k := range taskOrder {
@@ -594,8 +623,8 @@ func nilToEmpty(out *models.SeasonRecap) {
 	if out.Leaders == nil {
 		out.Leaders = []models.RecapLeader{}
 	}
-	if out.Rounds == nil {
-		out.Rounds = []models.RecapRoundStat{}
+	if out.Placers == nil {
+		out.Placers = []models.RecapPlacer{}
 	}
 	if out.Knockers == nil {
 		out.Knockers = []models.RecapKnocker{}
@@ -608,9 +637,6 @@ func nilToEmpty(out *models.SeasonRecap) {
 	}
 	if out.Rivals == nil {
 		out.Rivals = []models.RecapRival{}
-	}
-	if out.Summary.Corrections == nil {
-		out.Summary.Corrections = []models.RecapCorrection{}
 	}
 	if out.Tasks.Easy == nil {
 		out.Tasks.Easy = []models.RecapTask{}
