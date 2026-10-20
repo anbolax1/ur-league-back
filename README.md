@@ -192,7 +192,7 @@ cd backend
 | GET | `/api/ws/overlay` | все | WebSocket: поток состояния для OBS |
 | PATCH | `/api/users/{id}/role` | superadmin | назначить роль пользователю (`{role}`) |
 | POST | `/api/matches` | organizer | новый матч: обычный сразу в эфире, шоу-матч в расписании |
-| POST | `/api/tournaments/{id}/...` | organizer | ход матча в пульте: раунды, зачёт, ручные очки, журнал, итог |
+| POST | `/api/tournaments/{id}/...` | organizer | ход матча в пульте: заходы (карта, место), киллы, зачёт, ручные очки, журнал, итог |
 | GET | `/api/registrations/pool` | organizer | общий пул заявок |
 | POST | `/api/registrations/{id}/decide` | organizer | `{status: accepted\|declined}` |
 | POST | `/api/catalog/tasks` | organizer | добавить задание |
@@ -215,7 +215,7 @@ cd backend
 cmd/server/main.go        — точка входа, graceful shutdown
 internal/config           — конфиг из env/.env
 internal/db               — пул pgx + встроенные миграции (goose)
-internal/db/migrations    — *.sql (схема + сид справочников из правил турнира)
+internal/db/migrations    — *.sql (схема и карты лиги; задания организатор пишет в кабинете)
 internal/models           — доменные типы
 internal/store            — слой доступа к данным (pgx)
 internal/auth             — пароли (bcrypt) + JWT
