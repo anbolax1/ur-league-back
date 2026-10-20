@@ -589,19 +589,13 @@ func (s *Store) loadPatchInput(ctx context.Context, sn models.Season, prev *mode
 	}
 
 	// Очки первого раунда - из тех же частей, что счёт раунда в матче: ручные с ноками, задания
-	// старого пульта, контракты (свои и чужие) и легендарки.
+	// (свои и чужие) и легендарки.
 	rows, err = s.Pool.Query(ctx, `
 		SELECT x.pid, SUM(x.pts)::int
 		FROM rounds r
 		JOIN tournaments t ON t.id = r.tournament_id
 		JOIN LATERAL (
 			SELECT re.participant_id AS pid, re.points AS pts FROM round_entries re WHERE re.round_id = r.id
-			UNION ALL
-			SELECT rstd.participant_id, rstd.times * st.points
-			FROM round_starter_tasks rst
-			JOIN round_starter_task_done rstd ON rstd.round_starter_task_id = rst.id
-			JOIN starter_tasks st ON st.id = rst.starter_task_id
-			WHERE rst.round_id = r.id
 			UNION ALL
 			SELECT rbt.completed_by, CASE WHEN rbt.completed_by = rbt.participant_id THEN ct.points ELSE $2::int END
 			FROM round_bonus_tasks rbt JOIN catalog_tasks ct ON ct.id = rbt.task_id

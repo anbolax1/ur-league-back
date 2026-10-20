@@ -124,7 +124,7 @@ func (s *Store) GetMatchState(ctx context.Context, tournamentID string) (models.
 		return st, err
 	}
 
-	// Ручные очки с ноками (и основные задания матчей старого пульта) - по раундам.
+	// Ручные очки с ноками - по раундам.
 	manual := map[int]map[string]int{}
 	knocks := map[int]map[string]int{}
 	add := func(m map[int]map[string]int, round int, pid string, v int) {
@@ -151,33 +151,11 @@ func (s *Store) GetMatchState(ctx context.Context, tournamentID string) (models.
 		add(knocks, n, pid, k)
 	}
 	rows.Close()
-	main := map[int]map[string]int{}
-	rows, err = s.Pool.Query(ctx, `
-		SELECT r.number, rstd.participant_id, SUM(rstd.times * stt.points)::int
-		FROM round_starter_task_done rstd
-		JOIN round_starter_tasks rst ON rst.id = rstd.round_starter_task_id
-		JOIN starter_tasks stt ON stt.id = rst.starter_task_id
-		JOIN rounds r ON r.id = rst.round_id
-		WHERE r.tournament_id = $1
-		GROUP BY r.number, rstd.participant_id`, tournamentID)
-	if err != nil {
-		return st, err
-	}
-	for rows.Next() {
-		var n, pts int
-		var pid string
-		if err := rows.Scan(&n, &pid, &pts); err != nil {
-			rows.Close()
-			return st, err
-		}
-		add(main, n, pid, pts)
-	}
-	rows.Close()
 
 	scores := map[int]map[string]int{}
 	for _, r := range t.Rounds {
 		for _, p := range t.Participants {
-			add(scores, r.Number, p.ID, manual[r.Number][p.ID]+main[r.Number][p.ID])
+			add(scores, r.Number, p.ID, manual[r.Number][p.ID])
 		}
 	}
 	for _, task := range st.Tasks {

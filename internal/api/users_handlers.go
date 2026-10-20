@@ -11,19 +11,8 @@ import (
 	"github.com/ur-league/backend/internal/store"
 )
 
-// GET /api/users — список пользователей для выпадашек кабинета (выбор участников).
-// Organizer-only. Email не сериализуется (json:"-" в модели).
-func (s *Server) handleListUsers(w http.ResponseWriter, r *http.Request) {
-	users, err := s.Store.ListUsers(r.Context())
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
-		return
-	}
-	writeJSON(w, http.StatusOK, users)
-}
-
 // GET /api/users/overview?limit&offset&q&sort — пользователи с агрегатами участия,
-// постранично. Organizer-only. В отличие от /users, отдаёт email и статистику участия.
+// постранично. Organizer-only. В отличие от публичного профиля, отдаёт email и статистику участия.
 func (s *Server) handleListUsersOverview(w http.ResponseWriter, r *http.Request) {
 	limit, _ := strconv.Atoi(r.URL.Query().Get("limit"))
 	offset, _ := strconv.Atoi(r.URL.Query().Get("offset"))

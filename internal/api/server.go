@@ -140,25 +140,12 @@ func (s *Server) Router() http.Handler {
 			r.Post("/round-bonus-tasks/{id}/mark", s.handleMarkTask)
 			r.Post("/round-bonus-tasks/{id}/reroll", s.handleRerollTask)
 
-			r.Post("/tournaments", s.handleCreateTournament)
-			r.Patch("/tournaments/{id}", s.handleUpdateTournament)
-			r.Delete("/tournaments/{id}", s.handleDeleteTournament)
-			r.Post("/tournaments/{id}/participants", s.handleAddParticipant)
-			r.Post("/tournaments/{id}/rounds", s.handleCreateRound)
-			r.Patch("/rounds/{id}", s.handleUpdateRound)
-			r.Delete("/rounds/{id}", s.handleDeleteRound)
-			r.Put("/rounds/{id}/entries/{participantId}", s.handleUpsertRoundEntry)
-			r.Get("/rounds/{id}/entries", s.handleListRoundEntries)
-			r.Patch("/participants/{id}", s.handleUpdateParticipant)
-			r.Delete("/participants/{id}", s.handleRemoveParticipant)
-			r.Get("/users", s.handleListUsers)
 			r.Get("/users/overview", s.handleListUsersOverview)
 			r.Patch("/users/{id}/role", s.handleSetUserRole)
 			r.Post("/users/{id}/claim-link", s.handleCreateClaimLink)
 			r.Get("/registrations/pool", s.handleListPool)
 			r.Get("/registrations/pool/page", s.handleListPoolPage)
 			r.Post("/registrations/{id}/decide", s.handleDecideRegistration)
-			r.Put("/overlay/state", s.handlePutOverlayState)
 
 			// Сезоны рейтинга: начать новый (завершает текущий активный); удалить (турниры отвязываются).
 			r.Post("/seasons", s.handleStartSeason)
@@ -180,14 +167,11 @@ func (s *Server) Router() http.Handler {
 			r.Put("/overlay/presets/{id}", s.handleUpdateOverlayPreset)
 			r.Delete("/overlay/presets/{id}", s.handleDeleteOverlayPreset)
 
-			// Справочник заданий и усложнений (редактирование организатором)
+			// Справочник заданий (редактирование организатором)
 			r.Post("/catalog/tasks", s.handleCreateTask)
 			r.Post("/catalog/tasks/bulk", s.handleBulkCreateTasks)
 			r.Patch("/catalog/tasks/{id}", s.handleUpdateTask)
 			r.Delete("/catalog/tasks/{id}", s.handleDeleteTask)
-			r.Post("/catalog/complications", s.handleCreateComplication)
-			r.Patch("/catalog/complications/{id}", s.handleUpdateComplication)
-			r.Delete("/catalog/complications/{id}", s.handleDeleteComplication)
 
 			// Легендарные контракты: каталог + отметка выполнения (навсегда) / возврат в пул.
 			r.Post("/catalog/legendary", s.handleCreateLegendary)
@@ -195,28 +179,6 @@ func (s *Server) Router() http.Handler {
 			r.Delete("/catalog/legendary/{id}", s.handleDeleteLegendary)
 			r.Post("/legendary/{id}/complete", s.handleCompleteLegendary)
 			r.Post("/legendary/{id}/reopen", s.handleUncompleteLegendary)
-
-			// Стартовые задания: пул (скрыт от публики), распределение по раундам, зачёт в эфире.
-			r.Get("/starter-tasks", s.handleListStarterTasks)
-			r.Post("/starter-tasks", s.handleCreateStarterTask)
-			r.Patch("/starter-tasks/{id}", s.handleUpdateStarterTask)
-			r.Delete("/starter-tasks/{id}", s.handleDeleteStarterTask)
-			r.Get("/tournaments/{id}/starter-tasks", s.handleListTournamentStarterTasks)
-			r.Post("/rounds/{id}/starter-tasks", s.handleAssignRoundTask)
-			r.Delete("/round-starter-tasks/{id}", s.handleUnassignRoundTask)
-			r.Post("/round-starter-tasks/{id}/count", s.handleAdjustRoundTaskCount)
-
-			// Протоколы сторон в раунде (1 на игрока без повторов + счётчик нарушений-минут; на очки НЕ влияют).
-			r.Get("/tournaments/{id}/penalties", s.handleListTournamentPenalties)
-			r.Post("/rounds/{id}/protocol", s.handleSetProtocol)
-			r.Post("/rounds/{id}/protocol/violations", s.handleAdjustProtocolViolations)
-
-			// Контракты участников по раундам (раздача 2 случайных, ручная выдача, кросс-зачёт +2/+1).
-			r.Get("/tournaments/{id}/bonus-tasks", s.handleListTournamentBonusTasks)
-			r.Post("/rounds/{id}/bonus-tasks", s.handleAssignBonusTask)
-			r.Post("/rounds/{id}/contracts/deal", s.handleDealContracts)
-			r.Post("/round-bonus-tasks/{id}/complete", s.handleMarkContract)
-			r.Delete("/round-bonus-tasks/{id}", s.handleRemoveBonusTask)
 
 			// Хайлайты: модерация (очередь, одобрить/отклонить, удалить).
 			r.Get("/highlights/moderation", s.handleListHighlightsModeration)

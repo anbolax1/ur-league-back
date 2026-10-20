@@ -3,9 +3,6 @@ package store
 import (
 	"context"
 	"encoding/json"
-	"fmt"
-	"strings"
-	"time"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/ur-league/backend/internal/models"
@@ -94,56 +91,8 @@ func NormalizePlayerType(p string) string {
 	}
 }
 
-// UpdateTournamentMeta частично правит «шапку» турнира: название, тип игроков и/или время начала.
-// startsAtSet=true со startsAt=nil очищает дату (NULL). ErrNotFound — если турнира нет.
-func (s *Store) UpdateTournamentMeta(ctx context.Context, id string, title, playerType *string, ratingMultiplier *int, startsAtSet bool, startsAt *time.Time) error {
-	sets := []string{}
-	args := []any{}
-	n := 1
-	if title != nil {
-		sets = append(sets, fmt.Sprintf("title = $%d", n))
-		args = append(args, *title)
-		n++
-	}
-	if playerType != nil {
-		sets = append(sets, fmt.Sprintf("player_type = $%d", n))
-		args = append(args, NormalizePlayerType(*playerType))
-		n++
-	}
-	if ratingMultiplier != nil {
-		m := *ratingMultiplier
-		if m < 1 {
-			m = 1
-		}
-		sets = append(sets, fmt.Sprintf("rating_multiplier = $%d", n))
-		args = append(args, m)
-		n++
-	}
-	if startsAtSet {
-		sets = append(sets, fmt.Sprintf("starts_at = $%d", n))
-		args = append(args, startsAt)
-		n++
-	}
-	if len(sets) == 0 {
-		return nil
-	}
-	sets = append(sets, "updated_at = now()")
-	args = append(args, id)
-	q := `UPDATE tournaments SET ` + strings.Join(sets, ", ") + fmt.Sprintf(` WHERE id = $%d`, n)
-	ct, err := s.Pool.Exec(ctx, q, args...)
-	if err != nil {
-		return err
-	}
-	if ct.RowsAffected() == 0 {
-		return ErrNotFound
-	}
-	return nil
-}
-
-// DeleteTournament удаляет турнир и каскадом всё связанное: участников, раунды,
-// результаты раундов, назначенные стартовые/бонусные задания и штрафы-усложнения
-// (через FK ON DELETE CASCADE). Пулы каталога (задания/усложнения/стартовые) НЕ трогаются.
-// Поставленных в турнир игроков возвращаем в общий пул заявок. ErrNotFound — если турнира нет.
+// DeleteTournament удаляет матч вместе с его сторонами, раундами и выданными заданиями; каталог
+// заданий не трогается. Поставленных в матч игроков возвращает в общий пул заявок.
 func (s *Store) DeleteTournament(ctx context.Context, id string) error {
 	tx, err := s.Pool.Begin(ctx)
 	if err != nil {
@@ -236,14 +185,6 @@ func (s *Store) GetTournament(ctx context.Context, id string) (models.Tournament
 	return t, nil
 }
 
-// DemoteLiveExcept переводит все live-турниры, кроме указанного, в статус upcoming
-// (одновременно в эфире может быть только один турнир).
-func (s *Store) DemoteLiveExcept(ctx context.Context, exceptID string) error {
-	_, err := s.Pool.Exec(ctx,
-		`UPDATE tournaments SET status = 'upcoming', updated_at = now() WHERE status = 'live' AND id <> $1`, exceptID)
-	return err
-}
-
 // TournamentStatus возвращает только статус турнира (для проверок).
 func (s *Store) TournamentStatus(ctx context.Context, id string) (string, error) {
 	var status string
@@ -251,46 +192,10 @@ func (s *Store) TournamentStatus(ctx context.Context, id string) (string, error)
 	return status, err
 }
 
-func (s *Store) statusBy(ctx context.Context, q, arg string) (string, error) {
-	var st string
-	err := s.Pool.QueryRow(ctx, q, arg).Scan(&st)
-	return st, err
-}
-
-// Статус турнира по связанной сущности (для блокировки правок завершённого турнира).
-func (s *Store) StatusByRound(ctx context.Context, roundID string) (string, error) {
-	return s.statusBy(ctx, `SELECT t.status FROM rounds r JOIN tournaments t ON t.id = r.tournament_id WHERE r.id = $1`, roundID)
-}
-func (s *Store) StatusByParticipant(ctx context.Context, participantID string) (string, error) {
-	return s.statusBy(ctx, `SELECT t.status FROM participants p JOIN tournaments t ON t.id = p.tournament_id WHERE p.id = $1`, participantID)
-}
-func (s *Store) StatusByStarterAssignment(ctx context.Context, id string) (string, error) {
-	return s.statusBy(ctx, `SELECT t.status FROM round_starter_tasks rst JOIN rounds r ON r.id = rst.round_id JOIN tournaments t ON t.id = r.tournament_id WHERE rst.id = $1`, id)
-}
-func (s *Store) StatusByBonusAssignment(ctx context.Context, id string) (string, error) {
-	return s.statusBy(ctx, `SELECT t.status FROM round_bonus_tasks rbt JOIN rounds r ON r.id = rbt.round_id JOIN tournaments t ON t.id = r.tournament_id WHERE rbt.id = $1`, id)
-}
-
 func (s *Store) UpdateTournamentStatus(ctx context.Context, id, status string) (models.Tournament, error) {
 	return scanTournament(s.Pool.QueryRow(ctx,
 		`UPDATE tournaments SET status = $2, updated_at = now() WHERE id = $1 RETURNING `+tournamentCols,
 		id, status))
-}
-
-// SetWinnerTop ставит победителем участника с наибольшими очками (для авто-победителя
-// при завершении турнира). Если участников нет — победитель остаётся пустым.
-func (s *Store) SetWinnerTop(ctx context.Context, tournamentID string) error {
-	_, err := s.Pool.Exec(ctx, `
-		UPDATE tournaments SET winner_participant_id = (
-			SELECT id FROM participants WHERE tournament_id = $1 ORDER BY total_points DESC, seed ASC LIMIT 1
-		), updated_at = now() WHERE id = $1`, tournamentID)
-	return err
-}
-
-// ClearWinner снимает победителя (при возврате турнира из «завершён» в другой статус).
-func (s *Store) ClearWinner(ctx context.Context, tournamentID string) error {
-	_, err := s.Pool.Exec(ctx, `UPDATE tournaments SET winner_participant_id = NULL, updated_at = now() WHERE id = $1`, tournamentID)
-	return err
 }
 
 func (s *Store) SetTournamentWinner(ctx context.Context, id, participantID string) (models.Tournament, error) {

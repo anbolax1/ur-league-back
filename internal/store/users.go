@@ -186,7 +186,6 @@ func (s *Store) PlayerAggregate(ctx context.Context, userID string) (models.Play
 			return st, err
 		}
 		st.BasePoints += b.Base
-		st.MainPoints += b.Main
 		st.ContractPoints += b.Contracts
 		st.LegendaryPoints += b.Legendary
 	}
@@ -204,25 +203,6 @@ func (s *Store) PlayerAggregate(ctx context.Context, userID string) (models.Play
 		return st, err
 	}
 	return st, nil
-}
-
-// ListUsers — все пользователи (для выпадашек выбора участников в кабинете).
-func (s *Store) ListUsers(ctx context.Context) ([]models.User, error) {
-	rows, err := s.Pool.Query(ctx, `SELECT `+userCols+` FROM users ORDER BY display_name, login`)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-
-	out := []models.User{}
-	for rows.Next() {
-		u, err := scanUser(rows)
-		if err != nil {
-			return nil, err
-		}
-		out = append(out, u)
-	}
-	return out, rows.Err()
 }
 
 // ListUsersOverview — страница пользователей с агрегатами участия (раздел «Пользователи»).

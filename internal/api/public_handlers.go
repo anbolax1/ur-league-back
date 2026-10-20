@@ -104,19 +104,13 @@ func (s *Server) handleRules(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	complications, err := s.Store.ListCatalogComplications(r.Context())
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
-		return
-	}
 	legendary, err := s.Store.ListLegendary(r.Context())
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
-		"tasks":         tasks,         // контракты
-		"complications": complications, // протоколы
-		"legendary":     legendary,     // легендарные контракты
+		"tasks":     tasks,     // задания и протоколы
+		"legendary": legendary, // легендарки
 	})
 }

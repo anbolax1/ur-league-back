@@ -8,8 +8,8 @@ import (
 	"github.com/ur-league/backend/internal/models"
 )
 
-// Контракты (бывш. бонусные задания). Владелец контракта = participant_id (кому выдан).
-// completed_by — кто фактически выполнил: владелец → +2 балла, противник → +1 балл, NULL → не выполнен.
+// Задания сторон по раундам. Владелец задания = participant_id (кому выдано).
+// completed_by — кто фактически выполнил: владелец → очки задания, противник → +1, NULL → не выполнено.
 const rbtCols = `rbt.id, rbt.round_id, r.number, rbt.participant_id, rbt.task_id, ct.text, ct.points, ct.value_type, ct.kind, rbt.times, rbt.completed_by,
 	ct.name, ct.category, ct.tag, ` + dealtTaskMap
 
@@ -49,90 +49,6 @@ func (s *Store) ListTournamentBonusTasks(ctx context.Context, tournamentID strin
 	return out, rows.Err()
 }
 
-func (s *Store) bonusByKey(ctx context.Context, roundID, participantID, taskID string) (models.RoundBonusTask, error) {
-	return scanRoundBonusTask(s.Pool.QueryRow(ctx, `
-		SELECT `+rbtCols+`
-		FROM round_bonus_tasks rbt
-		JOIN catalog_tasks ct ON ct.id = rbt.task_id
-		JOIN rounds r ON r.id = rbt.round_id
-		WHERE rbt.round_id = $1 AND rbt.participant_id = $2 AND rbt.task_id = $3`, roundID, participantID, taskID))
-}
-
-// AssignBonusTask выдаёт участнику контракт на раунд (ручное добавление организатором).
-// ErrConflict — если этот контракт уже разыгран в ЭТОМ турнире (любой стороной): контракты
-// в рамках турнира не повторяются.
-func (s *Store) AssignBonusTask(ctx context.Context, roundID, participantID, taskID string) (models.RoundBonusTask, error) {
-	var dup bool
-	if err := s.Pool.QueryRow(ctx, `
-		SELECT EXISTS(
-			SELECT 1 FROM round_bonus_tasks rbt
-			JOIN rounds r ON r.id = rbt.round_id
-			WHERE rbt.task_id = $1
-			  AND r.tournament_id = (SELECT tournament_id FROM rounds WHERE id = $2)
-		)`, taskID, roundID).Scan(&dup); err != nil {
-		return models.RoundBonusTask{}, err
-	}
-	if dup {
-		return models.RoundBonusTask{}, ErrConflict
-	}
-	if _, err := s.Pool.Exec(ctx, `
-		INSERT INTO round_bonus_tasks (round_id, participant_id, task_id)
-		VALUES ($1, $2, $3) ON CONFLICT (round_id, participant_id, task_id) DO NOTHING`,
-		roundID, participantID, taskID); err != nil {
-		return models.RoundBonusTask{}, err
-	}
-	return s.bonusByKey(ctx, roundID, participantID, taskID)
-}
-
-// DealContracts выдаёт участнику до count случайных контрактов из пула, совместимых с типом
-// игроков турнира (pvpve — любые; pve/pvp — свои + универсальные pvpve), исключая уже разыгранные
-// в ЭТОМ турнире ЛЮБОЙ стороной (контракты в рамках турнира не повторяются).
-func (s *Store) DealContracts(ctx context.Context, roundID, participantID string, count int) ([]models.RoundBonusTask, error) {
-	rows, err := s.Pool.Query(ctx, `
-		SELECT ct.id
-		FROM catalog_tasks ct
-		JOIN rounds r ON r.id = $1
-		JOIN tournaments t ON t.id = r.tournament_id
-		WHERE ct.active AND ct.category = 'task'
-		  AND (t.player_type = 'pvpve' OR ct.kind = t.player_type OR ct.kind = 'pvpve')
-		  AND ct.id NOT IN (
-		      SELECT rbt.task_id FROM round_bonus_tasks rbt
-		      JOIN rounds r2 ON r2.id = rbt.round_id
-		      WHERE r2.tournament_id = t.id
-		  )
-		ORDER BY random()
-		LIMIT $2`, roundID, count)
-	if err != nil {
-		return nil, err
-	}
-	var ids []string
-	for rows.Next() {
-		var id string
-		if err := rows.Scan(&id); err != nil {
-			rows.Close()
-			return nil, err
-		}
-		ids = append(ids, id)
-	}
-	rows.Close()
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-
-	out := []models.RoundBonusTask{}
-	for _, id := range ids {
-		item, err := s.AssignBonusTask(ctx, roundID, participantID, id)
-		if errors.Is(err, ErrConflict) {
-			continue
-		}
-		if err != nil {
-			return out, err
-		}
-		out = append(out, item)
-	}
-	return out, nil
-}
-
 // OpponentParticipant — другая сторона в раунде (для зачёта «выполнил контракт противника»).
 func (s *Store) OpponentParticipant(ctx context.Context, roundID, participantID string) (string, error) {
 	var oppID string
@@ -154,13 +70,6 @@ type MarkResult struct {
 	Prev     *string
 	Target   *string
 	Affected []string
-}
-
-// MarkContract отмечает исполнителя контракта: by = owner (владелец) | opponent (противник, +1)
-// | none (снять отметку). Возвращает участников, чьи очки надо пересчитать (прежний + новый исполнитель).
-func (s *Store) MarkContract(ctx context.Context, id, by string) ([]string, error) {
-	res, err := s.MarkTask(ctx, id, by)
-	return res.Affected, err
 }
 
 // MarkTask - отметка исполнителя задания. Протокол засчитывается только владельцу.
@@ -218,30 +127,6 @@ func (s *Store) MarkTask(ctx context.Context, id, by string) (MarkResult, error)
 func (s *Store) SetTaskCompletedBy(ctx context.Context, id string, by *string) error {
 	_, err := s.Pool.Exec(ctx, `UPDATE round_bonus_tasks SET completed_by = $2 WHERE id = $1`, id, by)
 	return err
-}
-
-// RemoveBonusTask снимает контракт. Возвращает участников для пересчёта (владелец + исполнитель).
-func (s *Store) RemoveBonusTask(ctx context.Context, id string) ([]string, error) {
-	var owner string
-	var completedBy *string
-	err := s.Pool.QueryRow(ctx,
-		`DELETE FROM round_bonus_tasks WHERE id = $1 RETURNING participant_id, completed_by`, id).
-		Scan(&owner, &completedBy)
-	if errors.Is(err, pgx.ErrNoRows) {
-		return nil, ErrNotFound
-	}
-	if err != nil {
-		return nil, err
-	}
-	set := map[string]bool{owner: true}
-	if completedBy != nil {
-		set[*completedBy] = true
-	}
-	affected := make([]string, 0, len(set))
-	for k := range set {
-		affected = append(affected, k)
-	}
-	return affected, nil
 }
 
 // GetBonusAssignment - выданное задание и матч, к которому оно относится.

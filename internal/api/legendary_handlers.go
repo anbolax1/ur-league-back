@@ -128,6 +128,13 @@ func (s *Server) handleCompleteLegendary(w http.ResponseWriter, r *http.Request)
 	writeJSON(w, http.StatusOK, updated)
 }
 
+// recomputeIfSet пересчитывает очки участника, если легендарка была засчитана в матче.
+func (s *Server) recomputeIfSet(r *http.Request, participantID *string) {
+	if participantID != nil && *participantID != "" {
+		_, _ = s.Store.RecomputeParticipantPoints(r.Context(), *participantID)
+	}
+}
+
 // POST /api/legendary/{id}/reopen — снять выполнение (вернуть в пул доступных).
 func (s *Server) handleUncompleteLegendary(w http.ResponseWriter, r *http.Request) {
 	pid, err := s.Store.UncompleteLegendary(r.Context(), chi.URLParam(r, "id"))

@@ -285,19 +285,6 @@ type Round struct {
 	Status       string `json:"status"`
 }
 
-// RoundEntry — результат участника в раунде (B2). points — нетто-очки раунда;
-// tasks/bonus/complications — метаданные (что зачтено), на сумму не влияют.
-type RoundEntry struct {
-	ID            string          `json:"id"`
-	RoundID       string          `json:"roundId"`
-	ParticipantID string          `json:"participantId"`
-	Points        int             `json:"points"`
-	Tasks         json.RawMessage `json:"tasks"`
-	Bonus         json.RawMessage `json:"bonus"`
-	Complications json.RawMessage `json:"complications"`
-	UpdatedAt     time.Time       `json:"updatedAt"`
-}
-
 type Registration struct {
 	ID              string     `json:"id"`
 	TournamentID    *string    `json:"tournamentId,omitempty"` // куда поставлен; nil — пока в пуле
@@ -452,10 +439,9 @@ type PlayerStats struct {
 	StreakLen  int    `json:"streakLen"`
 
 	// Источники очков (суммарно по завершённым турнирам).
-	BasePoints      int `json:"basePoints"`      // ручная корректировка раунда (round_entries.points)
-	MainPoints      int `json:"mainPoints"`      // основные задания раунда
-	ContractPoints  int `json:"contractPoints"`  // контракты (свои 2 + чужие 1)
-	LegendaryPoints int `json:"legendaryPoints"` // легендарные контракты (10 каждый)
+	BasePoints      int `json:"basePoints"`      // ручные очки раунда вместе с ноками (round_entries.points)
+	ContractPoints  int `json:"contractPoints"`  // задания и протоколы: свои по очкам каталога, чужие по 1
+	LegendaryPoints int `json:"legendaryPoints"` // легендарки (10 каждая)
 
 	FavoriteMap       string `json:"favoriteMap"`
 	FavoriteMapRounds int    `json:"favoriteMapRounds"`
@@ -639,16 +625,6 @@ const (
 	TaskTagTimed  = "timed"  // «на время»
 )
 
-type CatalogComplication struct {
-	ID        string `json:"id"`
-	Text      string `json:"text"`
-	Penalty   int    `json:"penalty"`   // величина: баллы (fixed) или процент (percent)
-	ValueType string `json:"valueType"` // fixed | percent
-	Source    string `json:"source"`    // official | boosty
-	Author    string `json:"author,omitempty"`
-	Title     string `json:"title,omitempty"`
-}
-
 // EffectiveValue переводит величину в фактические баллы с учётом типа значения.
 // Для percent берётся процент от текущих очков участника в турнире.
 func EffectiveValue(value int, valueType string, currentPoints int) int {
@@ -661,11 +637,6 @@ func EffectiveValue(value int, valueType string, currentPoints int) int {
 // Reward — сколько баллов даёт задание при текущем счёте участника.
 func (t CatalogTask) Reward(currentPoints int) int {
 	return EffectiveValue(t.Points, t.ValueType, currentPoints)
-}
-
-// PenaltyFor — сколько баллов снимает усложнение при текущем счёте участника.
-func (c CatalogComplication) PenaltyFor(currentPoints int) int {
-	return EffectiveValue(c.Penalty, c.ValueType, currentPoints)
 }
 
 // Task — задание раунда в живом состоянии оверлея.
@@ -819,31 +790,6 @@ type WidgetInstance struct {
 	Props          json.RawMessage `json:"props,omitempty"` // пер-типовые доп.поля (текст, url логотипа и т.п.)
 }
 
-// StarterTask — стартовое задание из пула (НЕ бонусное, скрыто от публики/правил).
-type StarterTask struct {
-	ID     string `json:"id"`
-	Text   string `json:"text"`
-	Points int    `json:"points"`
-	Kind   string `json:"kind"` // pve | pvp | mixed
-}
-
-// RoundStarterTask — основное задание раунда (одинаково у обеих сторон). Зачёт раздельный по
-// сторонам: Done = participantId → сколько раз зачтено (баллы стороне = times × points).
-type RoundStarterTask struct {
-	ID            string          `json:"id"`
-	RoundID       string          `json:"roundId"`
-	StarterTaskID string          `json:"starterTaskId"`
-	Text          string          `json:"text"`
-	Points        int             `json:"points"`
-	Done          []RoundTaskDone `json:"done"`
-}
-
-// RoundTaskDone — зачёт основного задания конкретной стороной.
-type RoundTaskDone struct {
-	ParticipantID string `json:"participantId"`
-	Times         int    `json:"times"`
-}
-
 // RoundBonusTask — бонусное задание участника в раунде. times — сколько раз зачтено
 // (0 → не выполнено, переносится; баллы = times × величина). roundNumber — в каком раунде выбрано
 // (для «перенесено из раунда N»). Text/Points/ValueType — из catalog_tasks.
@@ -896,17 +842,4 @@ type LegendaryCompletion struct {
 	RoundNumber         int       `json:"roundNumber,omitempty"`
 	LegendaryText       string    `json:"legendaryText,omitempty"`
 	Points              int       `json:"points,omitempty"`
-}
-
-// RoundPenalty — применённое усложнение участнику в раунде. Штраф = times × величина
-// (fixed — баллы; percent — % от суммы набранных очков участника). Text/Penalty/ValueType — из каталога.
-type RoundPenalty struct {
-	ID             string `json:"id"`
-	RoundID        string `json:"roundId"`
-	ParticipantID  string `json:"participantId"`
-	ComplicationID string `json:"complicationId"`
-	Text           string `json:"text"`
-	Penalty        int    `json:"penalty"`
-	ValueType      string `json:"valueType"`
-	Times          int    `json:"times"`
 }

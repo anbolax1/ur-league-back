@@ -635,6 +635,15 @@ func (s *Server) liveRound(r *http.Request, tournamentID string) (models.Round, 
 	return models.Round{}, false
 }
 
+// recomputeMany пересчитывает очки нескольких участников (молча игнорирует ошибки отдельных).
+func (s *Server) recomputeMany(r *http.Request, ids []string) {
+	for _, id := range ids {
+		if id != "" {
+			_, _ = s.Store.RecomputeParticipantPoints(r.Context(), id)
+		}
+	}
+}
+
 func (s *Server) participantNames(r *http.Request, tournamentID string) map[string]string {
 	out := map[string]string{}
 	if parts, err := s.Store.ListParticipants(r.Context(), tournamentID); err == nil {

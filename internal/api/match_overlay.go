@@ -23,14 +23,7 @@ func (s *Server) publishMatchState(ctx context.Context, st models.MatchState) {
 	data, _ := s.Store.GetLiveState(ctx)
 	var stored models.LiveState
 	_ = json.Unmarshal(data, &stored)
-	ls := buildMatchLiveState(st, stored)
-	s.addStandingRatings(ctx, st, &ls)
-	if belt, err := s.Store.MatchBelt(ctx, st); err == nil {
-		ls.Belt = belt
-	} else {
-		log.Printf("пояс для оверлея: %v", err)
-	}
-	norm, err := json.Marshal(ls)
+	norm, err := json.Marshal(s.matchLiveState(ctx, st, stored))
 	if err != nil {
 		return
 	}
@@ -40,6 +33,18 @@ func (s *Server) publishMatchState(ctx context.Context, st models.MatchState) {
 	if env, err := s.stateEnvelope(norm); err == nil {
 		s.Hub.Broadcast(env)
 	}
+}
+
+// matchLiveState - табло матча для оверлея: счёт и задания из базы, рейтинг сторон и пояс лиги.
+func (s *Server) matchLiveState(ctx context.Context, st models.MatchState, stored models.LiveState) models.LiveState {
+	ls := buildMatchLiveState(st, stored)
+	s.addStandingRatings(ctx, st, &ls)
+	if belt, err := s.Store.MatchBelt(ctx, st); err == nil {
+		ls.Belt = belt
+	} else {
+		log.Printf("пояс для оверлея: %v", err)
+	}
+	return ls
 }
 
 // addStandingRatings добавляет сторонам табло MMR и место в таблице сезона; у завершённого матча
@@ -72,11 +77,6 @@ func (s *Server) addStandingRatings(ctx context.Context, st models.MatchState, l
 			sd.Place, sd.IsNew = place, place == 0
 		}
 	}
-}
-
-// isMatchFlow - матч ведётся новым пультом (два раунда или пики-баны), его оверлей считает сервер.
-func isMatchFlow(st models.MatchState) bool {
-	return st.Tournament.TotalRounds > 1 || len(st.Veto) > 0
 }
 
 func overlayTaskText(t models.RoundBonusTask) string {
