@@ -143,7 +143,7 @@ type RoundScore struct {
 	Points        int    `json:"points"`
 }
 
-// RoundKnocks - сколько ноков у стороны за раунд.
+// RoundKnocks - сколько киллов у стороны за раунд.
 type RoundKnocks struct {
 	RoundNumber   int    `json:"roundNumber"`
 	ParticipantID string `json:"participantId"`
@@ -160,7 +160,7 @@ type MatchState struct {
 	Tasks        []RoundBonusTask      `json:"tasks"`
 	Legendary    []LegendaryCompletion `json:"legendary"`
 	Scores       []RoundScore          `json:"scores"`
-	Manual       []RoundScore          `json:"manual"` // вместе с очками за ноки
+	Manual       []RoundScore          `json:"manual"` // вместе с очками за киллы
 	Knocks       []RoundKnocks         `json:"knocks"`
 	Log          []MatchLogEntry       `json:"log"`
 	Patches      []MatchPatch          `json:"patches"` // нашивки, полученные в этом матче
@@ -441,7 +441,7 @@ type PlayerStats struct {
 	StreakLen  int    `json:"streakLen"`
 
 	// Источники очков (суммарно по завершённым турнирам).
-	BasePoints      int `json:"basePoints"`      // ручные очки раунда вместе с ноками (round_entries.points)
+	BasePoints      int `json:"basePoints"`      // ручные очки раунда вместе с киллами (round_entries.points)
 	ContractPoints  int `json:"contractPoints"`  // задания и протоколы: свои по очкам каталога, чужие по 1
 	LegendaryPoints int `json:"legendaryPoints"` // легендарки (10 каждая)
 
@@ -467,19 +467,19 @@ type PlayerProfile struct {
 	Patches   map[string]PatchSeason     `json:"patches1x1"`   // нашивки по сезонам; ключ - сезон
 }
 
-// SeasonAnalytics — разбивка матчей одного сезона по картам и по соперникам и ноки игрока.
+// SeasonAnalytics — разбивка матчей одного сезона по картам и по соперникам и киллы игрока.
 type SeasonAnalytics struct {
 	Maps      []MapStat      `json:"maps"`
 	Opponents []OpponentStat `json:"opponents"`
 	Knocks    KnockStats     `json:"knocks"`
 }
 
-// KnockStats - ноки игрока за сезон. Матч идёт в зачёт, только если ноки в нём записаны хотя бы
+// KnockStats - киллы игрока за сезон. Матч идёт в зачёт, только если киллы в нём записаны хотя бы
 // одной стороне: в остальных их не считали, и нули занизили бы среднее.
 type KnockStats struct {
 	Matches      int    `json:"matches"`
 	Knocks       int    `json:"knocks"`
-	Best         int    `json:"best"` // больше всего ноков за один матч
+	Best         int    `json:"best"` // больше всего киллов за один матч
 	BestMatch    string `json:"bestMatch,omitempty"`
 	BestOpponent string `json:"bestOpponent,omitempty"`
 }

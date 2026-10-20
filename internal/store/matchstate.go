@@ -124,7 +124,7 @@ func (s *Store) GetMatchState(ctx context.Context, tournamentID string) (models.
 		return st, err
 	}
 
-	// Ручные очки с ноками - по раундам.
+	// Ручные очки с киллами - по раундам.
 	manual := map[int]map[string]int{}
 	knocks := map[int]map[string]int{}
 	add := func(m map[int]map[string]int, round int, pid string, v int) {

@@ -486,7 +486,7 @@ func (s *Store) FinishMatch(ctx context.Context, tournamentID string) (models.To
 	return s.GetTournament(ctx, tournamentID)
 }
 
-// AdjustRoundPoints добавляет стороне ручные очки за раунд; поправка не съедает очки за ноки, поэтому
+// AdjustRoundPoints добавляет стороне ручные очки за раунд; поправка не съедает очки за киллы, поэтому
 // фактическое изменение может быть меньше запрошенного.
 func (s *Store) AdjustRoundPoints(ctx context.Context, roundID, participantID string, delta int) (int, error) {
 	points, knocks, err := s.roundEntryCounts(ctx, roundID, participantID)
@@ -500,7 +500,7 @@ func (s *Store) AdjustRoundPoints(ctx context.Context, roundID, participantID st
 	return after - points, nil
 }
 
-// AdjustKnocks засчитывает стороне нок за раунд вместе с его очками или снимает ошибочный; ноков не
+// AdjustKnocks засчитывает стороне килл за раунд вместе с его очками или снимает ошибочный; киллов не
 // бывает меньше нуля, поэтому фактическое изменение может быть меньше запрошенного.
 func (s *Store) AdjustKnocks(ctx context.Context, roundID, participantID string, delta int) (int, error) {
 	points, knocks, err := s.roundEntryCounts(ctx, roundID, participantID)

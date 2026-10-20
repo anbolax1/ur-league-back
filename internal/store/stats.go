@@ -191,7 +191,7 @@ func (s *Store) Player1x1OpponentsBySeason(ctx context.Context, userID string) (
 	return out, rows.Err()
 }
 
-// Player1x1KnocksBySeason - ноки игрока в матчах 1×1 по сезонам. Ключ - сезон, пусто - матчи вне сезонов.
+// Player1x1KnocksBySeason - киллы игрока в матчах 1×1 по сезонам. Ключ - сезон, пусто - матчи вне сезонов.
 func (s *Store) Player1x1KnocksBySeason(ctx context.Context, userID string) (map[string]models.KnockStats, error) {
 	const q = `
 		SELECT COALESCE(t.season_id, '') AS season, t.id, COALESCE(opp.name, ''),
@@ -556,7 +556,7 @@ func joinTeamName(a, b string) string {
 }
 
 // PlayerStatsBundle собирает расширенную статистику 1×1 игрока: ленту, сводку, разбивку по картам и
-// соперникам и ноки отдельно по сезонам - в каждом сезоне рейтинг начинается заново.
+// соперникам и киллы отдельно по сезонам - в каждом сезоне рейтинг начинается заново.
 func (s *Store) PlayerStatsBundle(ctx context.Context, userID string) (models.MmrStats, []models.MmrPoint, map[string]models.SeasonAnalytics, error) {
 	timeline, err := s.Player1x1Timeline(ctx, userID)
 	if err != nil {
@@ -581,7 +581,7 @@ func (s *Store) PlayerStatsBundle(ctx context.Context, userID string) (models.Mm
 	for season := range opps {
 		analytics[season] = seasonAnalytics(maps[season], opps[season], knocks[season])
 	}
-	// Ничья не меняет MMR и не попадает в карты и соперников, а ноки в ней есть.
+	// Ничья не меняет MMR и не попадает в карты и соперников, а киллы в ней есть.
 	for season := range knocks {
 		analytics[season] = seasonAnalytics(maps[season], opps[season], knocks[season])
 	}

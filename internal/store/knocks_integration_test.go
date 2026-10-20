@@ -12,7 +12,7 @@ import (
 	"github.com/ur-league/backend/internal/store"
 )
 
-// Ноки в пульте и статистика ноков игрока против живой Postgres. Запуск - как у TestMMRIntegration.
+// Киллы в пульте и статистика киллов игрока против живой Postgres. Запуск - как у TestMMRIntegration.
 func TestKnocksIntegration(t *testing.T) {
 	url := os.Getenv("UR_TEST_DB")
 	if url == "" {
@@ -42,7 +42,7 @@ func TestKnocksIntegration(t *testing.T) {
 		pid   string
 		round string
 	}
-	// match1x1 - завершённый матч из одного раунда; ноки и поправки вносятся до завершения.
+	// match1x1 - завершённый матч из одного раунда; киллы и поправки вносятся до завершения.
 	match1x1 := func(a, b models.User, play func(sa, sb side)) string {
 		tour, err := st.CreateTournament(ctx, models.Tournament{Title: "kn-1x1", Mode: "1x1", RatingMultiplier: 1})
 		if err != nil {
@@ -94,7 +94,7 @@ func TestKnocksIntegration(t *testing.T) {
 			t.Fatalf("round_entries: %v", err)
 		}
 		if p != wantPoints || k != wantKnocks {
-			t.Errorf("очки/ноки = %d/%d, want %d/%d", p, k, wantPoints, wantKnocks)
+			t.Errorf("очки/киллы = %d/%d, want %d/%d", p, k, wantPoints, wantKnocks)
 		}
 	}
 	knocksOf := func(u models.User) models.KnockStats {
@@ -116,7 +116,7 @@ func TestKnocksIntegration(t *testing.T) {
 
 	a, b, c := mkUser("a"), mkUser("b"), mkUser("c")
 
-	// Нок приносит 3 очка, поправка не съедает очки за ноки, снять больше ноков, чем есть, нельзя.
+	// Килл приносит 3 очка, поправка не съедает очки за киллы, снять больше киллов, чем есть, нельзя.
 	m1 := match1x1(a, b, func(sa, _ side) {
 		knock(sa, 1, 1)
 		knock(sa, 1, 1)
@@ -132,9 +132,9 @@ func TestKnocksIntegration(t *testing.T) {
 		points(sa, 1, 1)
 		entry(sa, 7, 2)
 	})
-	// Ни одного нока у обеих сторон - ноки в матче не считали, в статистику он не идёт.
+	// Ни одного килла у обеих сторон - киллы в матче не считали, в статистику он не идёт.
 	match1x1(a, c, func(_, _ side) {})
-	// Ноки только у соперника: матч идёт в зачёт и стороне без ноков - с нулём.
+	// Киллы только у соперника: матч идёт в зачёт и стороне без киллов - с нулём.
 	m3 := match1x1(b, c, func(_, sc side) {
 		for range 4 {
 			knock(sc, 1, 1)
@@ -142,12 +142,12 @@ func TestKnocksIntegration(t *testing.T) {
 	})
 
 	if got, want := knocksOf(a), (models.KnockStats{Matches: 1, Knocks: 2, Best: 2, BestMatch: m1, BestOpponent: b.Login}); got != want {
-		t.Errorf("ноки a = %+v, want %+v", got, want)
+		t.Errorf("киллы a = %+v, want %+v", got, want)
 	}
 	if got, want := knocksOf(b), (models.KnockStats{Matches: 2}); got != want {
-		t.Errorf("ноки b = %+v, want %+v", got, want)
+		t.Errorf("киллы b = %+v, want %+v", got, want)
 	}
 	if got, want := knocksOf(c), (models.KnockStats{Matches: 1, Knocks: 4, Best: 4, BestMatch: m3, BestOpponent: b.Login}); got != want {
-		t.Errorf("ноки c = %+v, want %+v", got, want)
+		t.Errorf("киллы c = %+v, want %+v", got, want)
 	}
 }

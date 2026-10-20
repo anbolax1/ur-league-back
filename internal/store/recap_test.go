@@ -89,7 +89,7 @@ func TestBuildRecap(t *testing.T) {
 		t.Errorf("карты: %+v", r.Maps)
 	}
 	if r.BestKnock == nil || r.BestKnock.Player != gamma || r.BestKnock.Knocks != 2 {
-		t.Errorf("рекорд ноков: %+v", r.BestKnock)
+		t.Errorf("рекорд киллов: %+v", r.BestKnock)
 	}
 	if len(r.Rounds) != 2 || r.Rounds[0].Points != 7 || r.Rounds[1].Knocks != 2 {
 		t.Errorf("раунды: %+v", r.Rounds)

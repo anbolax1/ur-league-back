@@ -707,7 +707,7 @@ func (s *Server) handleMatchPoints(w http.ResponseWriter, r *http.Request) {
 	s.writeMatch(w, r, id, http.StatusOK)
 }
 
-// POST /api/tournaments/{id}/knocks {participantId, delta: 1|-1} - нок стороне в идущем раунде или
+// POST /api/tournaments/{id}/knocks {participantId, delta: 1|-1} - килл стороне в идущем раунде или
 // снять ошибочный.
 func (s *Server) handleMatchKnock(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "id")
@@ -719,7 +719,7 @@ func (s *Server) handleMatchKnock(w http.ResponseWriter, r *http.Request) {
 		Delta         int    `json:"delta"`
 	}
 	if err := readJSON(r, &b); err != nil || b.ParticipantID == "" || (b.Delta != 1 && b.Delta != -1) {
-		writeError(w, http.StatusBadRequest, "укажите сторону и нок")
+		writeError(w, http.StatusBadRequest, "укажите сторону и килл")
 		return
 	}
 	rd, names, ok := s.liveSide(w, r, id, b.ParticipantID)
@@ -733,9 +733,9 @@ func (s *Server) handleMatchKnock(w http.ResponseWriter, r *http.Request) {
 	}
 	if applied != 0 {
 		s.recomputeMany(r, []string{b.ParticipantID})
-		text := "нок"
+		text := "килл"
 		if applied < 0 {
-			text = "нок снят"
+			text = "килл снят"
 		}
 		pid := b.ParticipantID
 		_ = s.Store.AddMatchLog(r.Context(), id, rd.Number, &pid, "knock", names[pid]+": "+text, applied*store.KnockPoints, map[string]any{

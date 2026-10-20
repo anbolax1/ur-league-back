@@ -6,13 +6,13 @@ import "context"
 // задание противника - ContractCrossPoints.
 const ContractCrossPoints = 1
 
-// KnockPoints - очки за нок рейдера: они входят в ручные очки раунда, а сами ноки идут отдельным счётчиком.
+// KnockPoints - очки за килл: они входят в ручные очки раунда, а сами киллы идут отдельным счётчиком.
 const KnockPoints = 3
 
 // PointsBreakdown — разложение очков участника по источникам (единый источник формулы для
 // пересчёта total_points и для статистики профиля).
 type PointsBreakdown struct {
-	Base      int // ручные очки раунда вместе с ноками (round_entries.points)
+	Base      int // ручные очки раунда вместе с киллами (round_entries.points)
 	Contracts int // задания и протоколы: очки своих выполненных + 1 × чужие выполненные
 	Legendary int // легендарные контракты: SUM(points) выполненных участником
 }
@@ -22,7 +22,7 @@ func (b PointsBreakdown) Total() int { return b.Base + b.Contracts + b.Legendary
 
 // participantBreakdown считает разложение очков участника (без записи в БД):
 //
-//	base      = SUM(round_entries.points)                              -- ручные очки с ноками
+//	base      = SUM(round_entries.points)                              -- ручные очки с киллами
 //	contracts = SUM(очки своего выполненного задания + 1 за выполненное задание противника)
 //	legendary = SUM(points выполненных легендарных контрактов)
 func (s *Store) participantBreakdown(ctx context.Context, participantID string) (PointsBreakdown, error) {

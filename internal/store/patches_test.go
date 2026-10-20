@@ -101,22 +101,22 @@ func TestPatchKnocks(t *testing.T) {
 
 	od := awardsOf(all, "od")
 	if a, ok := od["hunter1"]; !ok || a.match != "mb" {
-		t.Fatalf("десятый нок во втором матче - «Охотник I»: %+v", a)
+		t.Fatalf("десятый килл во втором матче - «Охотник I»: %+v", a)
 	}
 	if a, ok := od["hunter2"]; !ok || a.match != "mc" {
-		t.Fatalf("25 ноков набраны в идущем матче - «Охотник II» сразу: %+v", a)
+		t.Fatalf("25 киллов набраны в идущем матче - «Охотник II» сразу: %+v", a)
 	}
 	if a, ok := od["clear1"]; !ok || a.match != "mb" || a.detail["knocks"] != 10 {
-		t.Fatalf("«Зачистка»: 8+ ноков за рейд, лучший рейд 10: %+v", a)
+		t.Fatalf("«Зачистка»: 8+ киллов за рейд, лучший рейд 10: %+v", a)
 	}
 	if a, ok := od["topknock1"]; !ok || !a.provisional {
 		t.Fatalf("«Главный охотник» в идущем сезоне - предварительный: %+v", a)
 	}
 	if _, ok := awardsOf(all, "takens")["pacifist1"]; !ok {
-		t.Fatalf("победа без ноков, когда у соперника ноки есть, - «Пацифист»")
+		t.Fatalf("победа без киллов, когда у соперника киллы есть, - «Пацифист»")
 	}
 	if _, ok := awardsOf(all, "od")["pacifist1"]; ok {
-		t.Fatalf("у победителя с ноками «Пацифиста» нет")
+		t.Fatalf("у победителя с киллами «Пацифиста» нет")
 	}
 }
 

@@ -29,12 +29,12 @@ const (
 	patchStreakWins   = 5   // «Неудержимый»: побед подряд
 	patchFlawlessWins = 5   // «Без поражений»: побед за сезон без единого поражения
 	patchUnderdog     = 0.4 // «Против шансов»: шанс победы по рейтингу не выше этого
-	patchClearKnocks  = 8   // «Зачистка»: ноков за один рейд
+	patchClearKnocks  = 8   // «Зачистка»: киллов за один заход
 	patchKingWins     = 3   // «Король карты»: меньше побед на карте - не король
 	patchMarathon     = 20  // «Марафонец»: матчей за сезон
 )
 
-// patchHunterTiers - ступени «Охотника»: ноков за сезон.
+// patchHunterTiers - ступени «Охотника»: киллов за сезон.
 var patchHunterTiers = []int{10, 25, 50}
 
 // День матча - по Москве: по московскому времени идут эфиры и расписание.
@@ -45,7 +45,7 @@ type patchSide struct {
 	total           int
 	rated           bool // у матча есть изменение MMR этой стороны
 	before, after   int
-	knocks          map[int]int // ноки по номерам раундов
+	knocks          map[int]int // киллы по номерам раундов
 	round1          int
 	hasRound1       bool
 }
@@ -53,7 +53,7 @@ type patchSide struct {
 type patchMatch struct {
 	id          string
 	at          time.Time
-	live        bool // матч идёт: в зачёт только ноки
+	live        bool // матч идёт: в зачёт только киллы
 	show        bool // шоу-матч: в таблицу идёт, но игровым днём турнира день не делает
 	mult, games int
 	winner      int // сторона-победитель; -1 - ничья
@@ -199,7 +199,7 @@ func computeSeasonPatches(in patchInput) []patchAward {
 			continue
 		}
 		m := e.match
-		// Ноки считаются и в идущем матче: «Зачистка» и «Охотник» выдаются прямо в эфире.
+		// Киллы считаются и в идущем матче: «Зачистка» и «Охотник» выдаются прямо в эфире.
 		for i, sd := range m.sides {
 			if sd.user == "" {
 				continue
@@ -393,7 +393,7 @@ func computeSeasonPatches(in patchInput) []patchAward {
 		}
 	}
 
-	// Подробности - по итогу сезона на сейчас: лучшая серия, число раз, все ноки.
+	// Подробности - по итогу сезона на сейчас: лучшая серия, число раз, все киллы.
 	for i := range out {
 		a := &out[i]
 		p := players[a.user]
@@ -432,7 +432,7 @@ func patchMapKey(name string) string {
 	return strings.ReplaceAll(strings.ToUpper(strings.TrimSpace(name)), "Ё", "Е")
 }
 
-// loadPatchInput собирает матчи сезона с рейтингом до и после, очками, ноками и картами.
+// loadPatchInput собирает матчи сезона с рейтингом до и после, очками, киллами и картами.
 func (s *Store) loadPatchInput(ctx context.Context, sn models.Season, prev *models.Season) (patchInput, error) {
 	in := patchInput{season: sn, prevGames: map[string]int{}}
 	const scope = `t.season_id = $1 AND t.mode = '1x1' AND t.status IN ('finished', 'live')`
@@ -588,7 +588,7 @@ func (s *Store) loadPatchInput(ctx context.Context, sn models.Season, prev *mode
 		return in, err
 	}
 
-	// Очки первого раунда - из тех же частей, что счёт раунда в матче: ручные с ноками, задания
+	// Очки первого раунда - из тех же частей, что счёт раунда в матче: ручные с киллами, задания
 	// (свои и чужие) и легендарки.
 	rows, err = s.Pool.Query(ctx, `
 		SELECT x.pid, SUM(x.pts)::int
