@@ -113,7 +113,7 @@ type MatchLogEntry struct {
 	ID            string    `json:"id"`
 	RoundNumber   int       `json:"roundNumber"`
 	ParticipantID *string   `json:"participantId,omitempty"`
-	Kind          string    `json:"kind"` // task | points | knock | legendary | map
+	Kind          string    `json:"kind"` // task | points | knock | legendary | map | place
 	Text          string    `json:"text"`
 	Delta         int       `json:"delta"`
 	CreatedAt     time.Time `json:"createdAt"`
@@ -133,12 +133,13 @@ type RoundKnocks struct {
 	Knocks        int    `json:"knocks"`
 }
 
-// Heat - заход стороны в раунде: карта, которую выбрала игра. Пусто - карту ещё не отметили.
+// Heat - заход стороны в раунде: карта, которую выбрала игра, и место в матче PUBG. Пусто - не отметили.
 type Heat struct {
 	RoundNumber   int    `json:"roundNumber"`
 	ParticipantID string `json:"participantId"`
 	MapCode       string `json:"mapCode,omitempty"`
 	Map           string `json:"map,omitempty"`
+	Place         *int   `json:"place,omitempty"` // 1-16
 }
 
 // MatchState - всё о матче одним ответом: шапка, заходы, задания, очки по раундам и журнал.
@@ -438,6 +439,12 @@ type PlayerStats struct {
 
 	FavoriteMap       string `json:"favoriteMap"`
 	FavoriteMapRounds int    `json:"favoriteMapRounds"`
+
+	// Места в заходах (1-16): сколько заходов с местом, лучшее, среднее и чикены - первые места.
+	PlacedHeats int     `json:"placedHeats"`
+	BestPlace   int     `json:"bestPlace"`
+	AvgPlace    float64 `json:"avgPlace"`
+	Chickens    int     `json:"chickens"`
 }
 
 // PlayerProfile — публичный профиль игрока: пользователь + статы + история (B6).

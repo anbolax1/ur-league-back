@@ -468,6 +468,80 @@ func (s *Server) handleMatchFocus(w http.ResponseWriter, r *http.Request) {
 	s.writeMatch(w, r, id, http.StatusOK)
 }
 
+// startedRound - сыгранный или идущий раунд матча с этим номером; 0 - идущий.
+func (s *Server) startedRound(w http.ResponseWriter, r *http.Request, tournamentID, participantID string, number int) (models.Round, map[string]string, bool) {
+	if number == 0 {
+		return s.liveSide(w, r, tournamentID, participantID)
+	}
+	rounds, err := s.Store.ListRounds(r.Context(), tournamentID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return models.Round{}, nil, false
+	}
+	for _, rd := range rounds {
+		if rd.Number != number {
+			continue
+		}
+		if rd.Status == "pending" {
+			break
+		}
+		names := s.participantNames(r, tournamentID)
+		if _, ok := names[participantID]; !ok {
+			writeError(w, http.StatusBadRequest, "сторона не из этого матча")
+			return rd, nil, false
+		}
+		return rd, names, true
+	}
+	writeError(w, http.StatusConflict, "этот раунд ещё не начался")
+	return models.Round{}, nil, false
+}
+
+// placeText - место в журнале матча: «3-е место», nil - место стёрто.
+func placeText(place *int) string {
+	if place == nil {
+		return "место стёрто"
+	}
+	return fmt.Sprintf("%d-е место", *place)
+}
+
+// POST /api/tournaments/{id}/heat/place {participantId, place, roundNumber?} - место стороны в матче PUBG по
+// экрану итогов захода: 1-16, null - стереть. Без roundNumber - в идущем раунде.
+func (s *Server) handleHeatPlace(w http.ResponseWriter, r *http.Request) {
+	id := chi.URLParam(r, "id")
+	if !s.matchGuard(w, r, id) {
+		return
+	}
+	var b struct {
+		ParticipantID string `json:"participantId"`
+		Place         *int   `json:"place"`
+		RoundNumber   int    `json:"roundNumber"`
+	}
+	if err := readJSON(r, &b); err != nil || b.ParticipantID == "" {
+		writeError(w, http.StatusBadRequest, "укажите сторону и место")
+		return
+	}
+	if b.Place != nil && (*b.Place < store.MinPlace || *b.Place > store.MaxPlace) {
+		writeError(w, http.StatusBadRequest, fmt.Sprintf("место — от %d до %d", store.MinPlace, store.MaxPlace))
+		return
+	}
+	rd, names, ok := s.startedRound(w, r, id, b.ParticipantID, b.RoundNumber)
+	if !ok {
+		return
+	}
+	prev, err := s.Store.SetHeatPlace(r.Context(), rd.ID, b.ParticipantID, b.Place)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	if placeText(prev) != placeText(b.Place) {
+		pid := b.ParticipantID
+		_ = s.Store.AddMatchLog(r.Context(), id, rd.Number, &pid, "place", names[pid]+": "+placeText(b.Place), 0, map[string]any{
+			"type": "place", "roundId": rd.ID, "participantId": pid, "prevPlace": prev,
+		})
+	}
+	s.writeMatch(w, r, id, http.StatusOK)
+}
+
 // POST /api/tournaments/{id}/heat/map {participantId, mapCode} - карта, которую выбрала игра для захода
 // стороны в идущем раунде; задание на эту карту выдаётся сразу.
 func (s *Server) handleHeatMap(w http.ResponseWriter, r *http.Request) {

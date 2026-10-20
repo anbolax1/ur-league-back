@@ -63,6 +63,7 @@ func (s *Store) UndoLastMatchLog(ctx context.Context, tournamentID string) ([]st
 		PrevMap       string     `json:"prevMap"`
 		Dealt         string     `json:"dealt"`
 		Removed       []HeatTask `json:"removed"`
+		PrevPlace     *int       `json:"prevPlace"`
 	}
 	_ = json.Unmarshal(raw, &u)
 
@@ -99,6 +100,10 @@ func (s *Store) UndoLastMatchLog(ctx context.Context, tournamentID string) ([]st
 		if err := s.undoHeatMap(ctx, u.RoundID, u.ParticipantID, u.PrevMap, u.Dealt, u.Removed); err != nil {
 			return nil, err
 		}
+	case "place":
+		if _, err := s.SetHeatPlace(ctx, u.RoundID, u.ParticipantID, u.PrevPlace); err != nil {
+			return nil, err
+		}
 	}
 	if _, err := s.Pool.Exec(ctx, `DELETE FROM match_log WHERE id = $1`, id); err != nil {
 		return nil, err
@@ -127,7 +132,7 @@ func (s *Store) GetMatchState(ctx context.Context, tournamentID string) (models.
 		return st, err
 	}
 
-	// Ручные очки с киллами и карты заходов - по раундам.
+	// Ручные очки с киллами, карты и места заходов - по раундам.
 	manual := map[int]map[string]int{}
 	knocks := map[int]map[string]int{}
 	heats := map[int]map[string]models.Heat{}
@@ -138,7 +143,7 @@ func (s *Store) GetMatchState(ctx context.Context, tournamentID string) (models.
 		m[round][pid] += v
 	}
 	rows, err := s.Pool.Query(ctx, `
-		SELECT r.number, re.participant_id, re.points, re.knocks, COALESCE(re.map_code, ''), COALESCE(m.name, '')
+		SELECT r.number, re.participant_id, re.points, re.knocks, COALESCE(re.map_code, ''), COALESCE(m.name, ''), re.place
 		FROM round_entries re JOIN rounds r ON r.id = re.round_id
 		LEFT JOIN maps m ON m.code = re.map_code
 		WHERE r.tournament_id = $1`, tournamentID)
@@ -149,7 +154,7 @@ func (s *Store) GetMatchState(ctx context.Context, tournamentID string) (models.
 		var n, pts, k int
 		var pid string
 		var h models.Heat
-		if err := rows.Scan(&n, &pid, &pts, &k, &h.MapCode, &h.Map); err != nil {
+		if err := rows.Scan(&n, &pid, &pts, &k, &h.MapCode, &h.Map, &h.Place); err != nil {
 			rows.Close()
 			return st, err
 		}

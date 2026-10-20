@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"errors"
+	"math"
 	"strings"
 	"time"
 
@@ -191,6 +192,18 @@ func (s *Store) PlayerAggregate(ctx context.Context, userID string) (models.Play
 		st.BasePoints += b.Base
 		st.ContractPoints += b.Contracts
 		st.LegendaryPoints += b.Legendary
+	}
+
+	// Места в заходах: лучшее, среднее и чикены - первые места.
+	var avg *float64
+	if err := s.Pool.QueryRow(ctx, `
+		SELECT COUNT(place)::int, COALESCE(MIN(place), 0)::int, AVG(place)::float8, COUNT(*) FILTER (WHERE place = 1)::int
+		FROM round_entries WHERE participant_id = ANY($1) AND place IS NOT NULL`, pids).
+		Scan(&st.PlacedHeats, &st.BestPlace, &avg, &st.Chickens); err != nil {
+		return st, err
+	}
+	if avg != nil {
+		st.AvgPlace = math.Round(*avg*10) / 10
 	}
 
 	// любимая карта — где у игрока больше всего заходов

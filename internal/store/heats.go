@@ -107,6 +107,28 @@ func (s *Store) SetFirstSide(ctx context.Context, tournamentID, participantID st
 	return tx.Commit(ctx)
 }
 
+// Места в матче Ultimate Royale: 16 команд.
+const (
+	MinPlace = 1
+	MaxPlace = 16
+)
+
+// SetHeatPlace записывает место стороны в матче PUBG по экрану итогов захода; nil - стереть. Отдаёт прежнее
+// место - для отмены из журнала.
+func (s *Store) SetHeatPlace(ctx context.Context, roundID, participantID string, place *int) (*int, error) {
+	var prev *int
+	err := s.Pool.QueryRow(ctx,
+		`SELECT place FROM round_entries WHERE round_id = $1 AND participant_id = $2`, roundID, participantID).Scan(&prev)
+	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
+		return nil, err
+	}
+	_, err = s.Pool.Exec(ctx, `
+		INSERT INTO round_entries (round_id, participant_id, place) VALUES ($1, $2, $3)
+		ON CONFLICT (round_id, participant_id) DO UPDATE SET place = EXCLUDED.place, updated_at = now()`,
+		roundID, participantID, place)
+	return prev, err
+}
+
 // HeatTask - задание на карту, выданное заходу: его id и задание каталога. Нужно, чтобы отмена
 // вернула прежнее задание под тем же id.
 type HeatTask struct {
