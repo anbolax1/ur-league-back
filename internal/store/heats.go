@@ -157,10 +157,8 @@ func (s *Store) SetHeatMap(ctx context.Context, roundID, participantID, mapCode 
 		}
 		return ch, err
 	}
-	var tournamentID, playerType string
-	if err := s.Pool.QueryRow(ctx, `
-		SELECT r.tournament_id, t.player_type FROM rounds r JOIN tournaments t ON t.id = r.tournament_id WHERE r.id = $1`,
-		roundID).Scan(&tournamentID, &playerType); err != nil {
+	var tournamentID string
+	if err := s.Pool.QueryRow(ctx, `SELECT tournament_id FROM rounds WHERE id = $1`, roundID).Scan(&tournamentID); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return ch, ErrNotFound
 		}
@@ -223,9 +221,9 @@ func (s *Store) SetHeatMap(ctx context.Context, roundID, participantID, mapCode 
 	}
 	ch.Changed = true
 
-	id, err := s.pickTask(ctx, tournamentID, playerType, taskSlot{"task", true}, mapCode, "")
+	id, err := s.pickTask(ctx, tournamentID, taskSlot{"task", true}, mapCode, "")
 	if errors.Is(err, ErrNotFound) {
-		id, err = s.pickTask(ctx, tournamentID, playerType, taskSlot{"task", false}, "", "")
+		id, err = s.pickTask(ctx, tournamentID, taskSlot{"task", false}, "", "")
 	}
 	if errors.Is(err, ErrNotFound) {
 		return ch, nil

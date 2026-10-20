@@ -10,7 +10,7 @@ import (
 
 // Задания сторон по раундам. Владелец задания = participant_id (кому выдано).
 // completed_by — кто фактически выполнил: владелец → очки задания, противник → +1, NULL → не выполнено.
-const rbtCols = `rbt.id, rbt.round_id, r.number, rbt.participant_id, rbt.task_id, ct.text, ct.points, ct.value_type, ct.kind, rbt.times, rbt.completed_by,
+const rbtCols = `rbt.id, rbt.round_id, r.number, rbt.participant_id, rbt.task_id, ct.text, ct.points, ct.value_type, rbt.times, rbt.completed_by,
 	ct.name, ct.category, ct.tag, ` + dealtTaskMap
 
 // dealtTaskMap - карта выданного задания: у задания на картах это карта захода стороны, у общего - пусто.
@@ -22,7 +22,7 @@ const heatJoin = `LEFT JOIN round_entries re ON re.round_id = rbt.round_id AND r
 func scanRoundBonusTask(row pgx.Row) (models.RoundBonusTask, error) {
 	var t models.RoundBonusTask
 	err := row.Scan(&t.ID, &t.RoundID, &t.RoundNumber, &t.ParticipantID, &t.TaskID,
-		&t.Text, &t.Points, &t.ValueType, &t.Kind, &t.Times, &t.CompletedBy,
+		&t.Text, &t.Points, &t.ValueType, &t.Times, &t.CompletedBy,
 		&t.Name, &t.Category, &t.Tag, &t.MapCode)
 	return t, err
 }
@@ -145,7 +145,7 @@ func (s *Store) GetBonusAssignment(ctx context.Context, id string) (models.Round
 		WHERE rbt.id = $1`, id)
 	var t models.RoundBonusTask
 	err := row.Scan(&t.ID, &t.RoundID, &t.RoundNumber, &t.ParticipantID, &t.TaskID,
-		&t.Text, &t.Points, &t.ValueType, &t.Kind, &t.Times, &t.CompletedBy,
+		&t.Text, &t.Points, &t.ValueType, &t.Times, &t.CompletedBy,
 		&t.Name, &t.Category, &t.Tag, &t.MapCode, &tournamentID)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return t, "", ErrNotFound

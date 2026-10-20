@@ -53,7 +53,7 @@ func TestMultiMapTaskIntegration(t *testing.T) {
 	}
 	task, err := st.CreateCatalogTask(ctx, models.CatalogTask{
 		Name: fmt.Sprintf("mm-%d", uniq), Text: "Одно задание на две карты.", Points: 2, ValueType: models.ValueFixed,
-		Kind: "pvpve", Source: "official", Category: "task", MapCodes: []string{maps[1], "no_such_map", maps[0], maps[1]}, Active: true,
+		Source: "official", Category: "task", MapCodes: []string{maps[1], "no_such_map", maps[0], maps[1]}, Active: true,
 	})
 	if err != nil {
 		t.Fatalf("CreateCatalogTask: %v", err)
@@ -63,7 +63,7 @@ func TestMultiMapTaskIntegration(t *testing.T) {
 		t.Fatalf("карты задания = %s, want %s (без лишних и повторов, в порядке карт)", got, fmt.Sprint(maps))
 	}
 
-	tour, err := st.CreateTournament(ctx, models.Tournament{Title: "mm-two-maps", Mode: "1x1", PlayerType: "pvp"})
+	tour, err := st.CreateTournament(ctx, models.Tournament{Title: "mm-two-maps", Mode: "1x1"})
 	if err != nil {
 		t.Fatalf("CreateTournament: %v", err)
 	}

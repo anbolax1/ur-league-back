@@ -23,7 +23,6 @@ func (s *Server) handleListLegendary(w http.ResponseWriter, r *http.Request) {
 type legendaryBody struct {
 	Text   string `json:"text"`
 	Points int    `json:"points"`
-	Kind   string `json:"kind"`
 	Source string `json:"source"`
 	Author string `json:"author"`
 	Title  string `json:"title"`
@@ -33,7 +32,6 @@ func (b legendaryBody) toModel() models.CatalogLegendary {
 	return models.CatalogLegendary{
 		Text:   strings.TrimSpace(b.Text),
 		Points: b.Points,
-		Kind:   store.NormalizePlayerType(b.Kind),
 		Source: defaultStr(b.Source, "official"),
 		Author: strings.TrimSpace(b.Author),
 		Title:  strings.TrimSpace(b.Title),

@@ -8,13 +8,13 @@ import (
 	"github.com/ur-league/backend/internal/models"
 )
 
-const tournamentCols = `id, title, mode, player_type, status, total_rounds, maps, starts_at, winner_participant_id, created_at, updated_at, rating_multiplier, format, games, prize, preview_path`
+const tournamentCols = `id, title, mode, status, total_rounds, maps, starts_at, winner_participant_id, created_at, updated_at, rating_multiplier, format, games, prize, preview_path`
 
 // tournamentFields - куда читать колонки tournamentCols; finish доводит прочитанное до модели.
 func tournamentFields(t *models.Tournament) (dest []any, finish func()) {
 	var mapsRaw []byte
 	var preview string
-	dest = []any{&t.ID, &t.Title, &t.Mode, &t.PlayerType, &t.Status, &t.TotalRounds, &mapsRaw,
+	dest = []any{&t.ID, &t.Title, &t.Mode, &t.Status, &t.TotalRounds, &mapsRaw,
 		&t.StartsAt, &t.WinnerParticipantID, &t.CreatedAt, &t.UpdatedAt, &t.RatingMultiplier, &t.Format, &t.Games,
 		&t.Prize, &preview}
 	finish = func() {
@@ -52,7 +52,6 @@ func (s *Store) CreateTournament(ctx context.Context, t models.Tournament) (mode
 	if t.Status == "" {
 		t.Status = "upcoming"
 	}
-	t.PlayerType = NormalizePlayerType(t.PlayerType)
 	// Ровно 1 раунд на турнир (один раунд = один рейд) — менять нельзя.
 	t.TotalRounds = 1
 	if t.RatingMultiplier < 1 {
@@ -60,10 +59,10 @@ func (s *Store) CreateTournament(ctx context.Context, t models.Tournament) (mode
 	}
 	// season_id — текущий активный сезон (подзапросом): новые турниры идут в него.
 	const q = `
-		INSERT INTO tournaments (title, mode, player_type, status, total_rounds, maps, starts_at, rating_multiplier, season_id)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, (SELECT id FROM seasons WHERE status = 'active' LIMIT 1))
+		INSERT INTO tournaments (title, mode, status, total_rounds, maps, starts_at, rating_multiplier, season_id)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, (SELECT id FROM seasons WHERE status = 'active' LIMIT 1))
 		RETURNING ` + tournamentCols
-	created, err := scanTournament(s.Pool.QueryRow(ctx, q, t.Title, t.Mode, t.PlayerType, t.Status, t.TotalRounds, string(maps), t.StartsAt, t.RatingMultiplier))
+	created, err := scanTournament(s.Pool.QueryRow(ctx, q, t.Title, t.Mode, t.Status, t.TotalRounds, string(maps), t.StartsAt, t.RatingMultiplier))
 	if err != nil {
 		return created, err
 	}
@@ -77,18 +76,6 @@ func (s *Store) CreateTournament(ctx context.Context, t models.Tournament) (mode
 	}
 	created.Rounds, _ = s.ListRounds(ctx, created.ID)
 	return created, nil
-}
-
-// NormalizePlayerType приводит тип игроков к pve | pvp | pvpve (по умолчанию pvpve).
-func NormalizePlayerType(p string) string {
-	switch p {
-	case "pve", "pvp", "pvpve":
-		return p
-	case "mixed":
-		return "pvpve"
-	default:
-		return "pvpve"
-	}
 }
 
 // DeleteTournament удаляет матч вместе с его сторонами, раундами и выданными заданиями; каталог

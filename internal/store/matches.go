@@ -26,7 +26,6 @@ type MatchSide struct {
 // NewMatch - параметры нового матча.
 type NewMatch struct {
 	Mode             string
-	PlayerType       string
 	RatingMultiplier int
 	Format           string     // match | show
 	Rounds           int        // обычный матч - 2 или 3 раунда, у шоу-матча всегда 3
@@ -157,10 +156,10 @@ func (s *Store) CreateMatch(ctx context.Context, in NewMatch) (models.Tournament
 
 	var id string
 	if err := tx.QueryRow(ctx, `
-		INSERT INTO tournaments (title, mode, player_type, status, total_rounds, maps, starts_at, rating_multiplier, season_id, format, prize)
-		VALUES ($1, $2, $3, $4, $5, '[]', $6, $7, (SELECT id FROM seasons WHERE status = 'active' LIMIT 1), $8, $9)
+		INSERT INTO tournaments (title, mode, status, total_rounds, maps, starts_at, rating_multiplier, season_id, format, prize)
+		VALUES ($1, $2, $3, $4, '[]', $5, $6, (SELECT id FROM seasons WHERE status = 'active' LIMIT 1), $7, $8)
 		RETURNING id`,
-		a.part.Name+" vs "+b.part.Name, in.Mode, NormalizePlayerType(in.PlayerType), status, rounds, startsAt,
+		a.part.Name+" vs "+b.part.Name, in.Mode, status, rounds, startsAt,
 		in.RatingMultiplier, in.Format, in.Prize).Scan(&id); err != nil {
 		return models.Tournament{}, err
 	}
@@ -335,14 +334,11 @@ type taskSlot struct {
 	onMap    bool
 }
 
-// DealRoundTasks выдаёт каждой стороне на раунд общее задание и протокол из пула под тип игроков;
-// повторов в матче нет. Задание на карту выдаётся позже, когда ведущий отметит карту захода.
+// DealRoundTasks выдаёт каждой стороне на раунд общее задание и протокол; повторов в матче нет.
+// Задание на карту выдаётся позже, когда ведущий отметит карту захода.
 func (s *Store) DealRoundTasks(ctx context.Context, roundID string) error {
-	var tournamentID, playerType string
-	if err := s.Pool.QueryRow(ctx, `
-		SELECT r.tournament_id, t.player_type
-		FROM rounds r JOIN tournaments t ON t.id = r.tournament_id WHERE r.id = $1`, roundID).
-		Scan(&tournamentID, &playerType); err != nil {
+	var tournamentID string
+	if err := s.Pool.QueryRow(ctx, `SELECT tournament_id FROM rounds WHERE id = $1`, roundID).Scan(&tournamentID); err != nil {
 		return err
 	}
 	var dealt bool
@@ -360,7 +356,7 @@ func (s *Store) DealRoundTasks(ctx context.Context, roundID string) error {
 	slots := []taskSlot{{"task", false}, {"protocol", false}}
 	for _, p := range parts {
 		for _, sl := range slots {
-			id, err := s.pickTask(ctx, tournamentID, playerType, sl, "", "")
+			id, err := s.pickTask(ctx, tournamentID, sl, "", "")
 			if errors.Is(err, ErrNotFound) {
 				continue
 			}
@@ -378,19 +374,18 @@ func (s *Store) DealRoundTasks(ctx context.Context, roundID string) error {
 }
 
 // pickTask - случайное действующее задание нужного вида, ещё не выданное в этом матче.
-func (s *Store) pickTask(ctx context.Context, tournamentID, playerType string, sl taskSlot, mapCode, except string) (string, error) {
+func (s *Store) pickTask(ctx context.Context, tournamentID string, sl taskSlot, mapCode, except string) (string, error) {
 	var id string
 	err := s.Pool.QueryRow(ctx, `
 		SELECT ct.id FROM catalog_tasks ct
-		WHERE ct.active AND ct.category = $3
-		  AND ($2 = 'pvpve' OR ct.kind = $2 OR ct.kind = 'pvpve')
-		  AND (($4 = '' AND cardinality(ct.map_codes) = 0) OR $4 = ANY(ct.map_codes))
-		  AND ct.id <> $5
+		WHERE ct.active AND ct.category = $2
+		  AND (($3 = '' AND cardinality(ct.map_codes) = 0) OR $3 = ANY(ct.map_codes))
+		  AND ct.id <> $4
 		  AND ct.id NOT IN (
 		      SELECT rbt.task_id FROM round_bonus_tasks rbt JOIN rounds r ON r.id = rbt.round_id
 		      WHERE r.tournament_id = $1)
 		ORDER BY random() LIMIT 1`,
-		tournamentID, playerType, sl.category, mapForSlot(sl, mapCode), except).Scan(&id)
+		tournamentID, sl.category, mapForSlot(sl, mapCode), except).Scan(&id)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return "", ErrNotFound
 	}
@@ -406,19 +401,18 @@ func mapForSlot(sl taskSlot, mapCode string) string {
 
 // RerollTask меняет невыполненное задание на другое того же вида (выпало невыполнимое).
 func (s *Store) RerollTask(ctx context.Context, assignmentID string) error {
-	var tournamentID, playerType, taskID, category, roundMap string
+	var tournamentID, taskID, category, roundMap string
 	var onMap bool
 	var completed *string
 	err := s.Pool.QueryRow(ctx, `
-		SELECT r.tournament_id, t.player_type, rbt.task_id, ct.category, cardinality(ct.map_codes) > 0,
+		SELECT r.tournament_id, rbt.task_id, ct.category, cardinality(ct.map_codes) > 0,
 		       COALESCE(re.map_code, ''), rbt.completed_by
 		FROM round_bonus_tasks rbt
 		JOIN rounds r ON r.id = rbt.round_id
-		JOIN tournaments t ON t.id = r.tournament_id
 		JOIN catalog_tasks ct ON ct.id = rbt.task_id
 		LEFT JOIN round_entries re ON re.round_id = rbt.round_id AND re.participant_id = rbt.participant_id
 		WHERE rbt.id = $1`, assignmentID).
-		Scan(&tournamentID, &playerType, &taskID, &category, &onMap, &roundMap, &completed)
+		Scan(&tournamentID, &taskID, &category, &onMap, &roundMap, &completed)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return ErrNotFound
 	}
@@ -429,7 +423,7 @@ func (s *Store) RerollTask(ctx context.Context, assignmentID string) error {
 		return ErrConflict
 	}
 	sl := taskSlot{category: category, onMap: onMap}
-	next, err := s.pickTask(ctx, tournamentID, playerType, sl, roundMap, taskID)
+	next, err := s.pickTask(ctx, tournamentID, sl, roundMap, taskID)
 	if err != nil {
 		return err
 	}

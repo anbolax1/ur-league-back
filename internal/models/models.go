@@ -221,8 +221,7 @@ type Tournament struct {
 	ID                  string           `json:"id"`
 	Title               string           `json:"title"`
 	Mode                string           `json:"mode"`
-	PlayerType          string           `json:"playerType"` // pve | pvp | pvpve — тип игроков (пул основных заданий/контрактов)
-	Format              string           `json:"format"`     // match | show: шоу-матч объявляется заранее и идёт в расписание
+	Format              string           `json:"format"` // match | show: шоу-матч объявляется заранее и идёт в расписание
 	Status              string           `json:"status"`
 	TotalRounds         int              `json:"totalRounds"`
 	RatingMultiplier    int              `json:"ratingMultiplier"` // жетон «×2 рейтинга»: 1 - обычный матч, 2 - удвоенное изменение MMR
@@ -608,7 +607,6 @@ type CatalogTask struct {
 	Text      string   `json:"text"`
 	Points    int      `json:"points"`    // величина: баллы (fixed) или процент (percent)
 	ValueType string   `json:"valueType"` // fixed | percent
-	Kind      string   `json:"kind"`      // pve | pvp | pvpve
 	Source    string   `json:"source"`    // official | boosty
 	Author    string   `json:"author,omitempty"`
 	Title     string   `json:"title,omitempty"`
@@ -791,7 +789,6 @@ type RoundBonusTask struct {
 	Text          string  `json:"text"`
 	Points        int     `json:"points"`
 	ValueType     string  `json:"valueType"`
-	Kind          string  `json:"kind"`                  // pve | pvp | pvpve
 	Times         int     `json:"times"`                 // legacy-счётчик (не используется в скоринге контрактов)
 	CompletedBy   *string `json:"completedBy,omitempty"` // кто выполнил: владелец - очки задания, противник - +1, nil - не выполнено
 	Name          string  `json:"name,omitempty"`
@@ -805,7 +802,6 @@ type CatalogLegendary struct {
 	ID        string `json:"id"`
 	Text      string `json:"text"`
 	Points    int    `json:"points"`
-	Kind      string `json:"kind"`   // pve | pvp | pvpve
 	Source    string `json:"source"` // official | boosty
 	Author    string `json:"author,omitempty"`
 	Title     string `json:"title,omitempty"`

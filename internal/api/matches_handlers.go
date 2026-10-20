@@ -151,7 +151,6 @@ func (s *Server) handleCreatePlaceholder(w http.ResponseWriter, r *http.Request)
 func (s *Server) handleCreateMatch(w http.ResponseWriter, r *http.Request) {
 	var b struct {
 		Mode             string     `json:"mode"`
-		PlayerType       string     `json:"playerType"`
 		RatingMultiplier int        `json:"ratingMultiplier"`
 		Format           string     `json:"format"`
 		Rounds           int        `json:"rounds"`
@@ -180,7 +179,7 @@ func (s *Server) handleCreateMatch(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	in := store.NewMatch{
-		Mode: b.Mode, PlayerType: b.PlayerType, RatingMultiplier: b.RatingMultiplier, Format: b.Format, Rounds: b.Rounds, StartsAt: b.StartsAt,
+		Mode: b.Mode, RatingMultiplier: b.RatingMultiplier, Format: b.Format, Rounds: b.Rounds, StartsAt: b.StartsAt,
 		Prize: prize,
 	}
 	for i, sd := range b.Sides {

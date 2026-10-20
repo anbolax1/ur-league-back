@@ -9,11 +9,11 @@ import (
 	"github.com/ur-league/backend/internal/models"
 )
 
-const legendaryCols = `id, text, points, kind, source, author, title, status`
+const legendaryCols = `id, text, points, source, author, title, status`
 
 func scanLegendary(row pgx.Row) (models.CatalogLegendary, error) {
 	var l models.CatalogLegendary
-	err := row.Scan(&l.ID, &l.Text, &l.Points, &l.Kind, &l.Source, &l.Author, &l.Title, &l.Status)
+	err := row.Scan(&l.ID, &l.Text, &l.Points, &l.Source, &l.Author, &l.Title, &l.Status)
 	return l, err
 }
 
@@ -93,10 +93,10 @@ func (s *Store) CreateLegendary(ctx context.Context, l models.CatalogLegendary) 
 		l.Points = 10
 	}
 	const q = `
-		INSERT INTO legendary_contracts (text, points, kind, source, author, title, sort_order)
-		VALUES ($1, $2, $3, $4, $5, $6, (SELECT COALESCE(MAX(sort_order), 0) + 1 FROM legendary_contracts))
+		INSERT INTO legendary_contracts (text, points, source, author, title, sort_order)
+		VALUES ($1, $2, $3, $4, $5, (SELECT COALESCE(MAX(sort_order), 0) + 1 FROM legendary_contracts))
 		RETURNING ` + legendaryCols
-	return scanLegendary(s.Pool.QueryRow(ctx, q, l.Text, l.Points, l.Kind, l.Source, l.Author, l.Title))
+	return scanLegendary(s.Pool.QueryRow(ctx, q, l.Text, l.Points, l.Source, l.Author, l.Title))
 }
 
 func (s *Store) UpdateLegendary(ctx context.Context, id string, l models.CatalogLegendary) (models.CatalogLegendary, error) {
@@ -105,10 +105,10 @@ func (s *Store) UpdateLegendary(ctx context.Context, id string, l models.Catalog
 	}
 	const q = `
 		UPDATE legendary_contracts
-		SET text = $2, points = $3, kind = $4, source = $5, author = $6, title = $7
+		SET text = $2, points = $3, source = $4, author = $5, title = $6
 		WHERE id = $1
 		RETURNING ` + legendaryCols
-	res, err := scanLegendary(s.Pool.QueryRow(ctx, q, id, l.Text, l.Points, l.Kind, l.Source, l.Author, l.Title))
+	res, err := scanLegendary(s.Pool.QueryRow(ctx, q, id, l.Text, l.Points, l.Source, l.Author, l.Title))
 	if errors.Is(err, pgx.ErrNoRows) {
 		return res, ErrNotFound
 	}

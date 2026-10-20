@@ -9,7 +9,6 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/jackc/pgx/v5"
 	"github.com/ur-league/backend/internal/models"
-	"github.com/ur-league/backend/internal/store"
 )
 
 // validValue проверяет тип значения и диапазон (для процента — 0..100).
@@ -37,7 +36,6 @@ type taskBody struct {
 	Text      string   `json:"text"`
 	Points    int      `json:"points"`
 	ValueType string   `json:"valueType"`
-	Kind      string   `json:"kind"`
 	Source    string   `json:"source"`
 	Author    string   `json:"author"`
 	Title     string   `json:"title"`
@@ -84,7 +82,6 @@ func (b taskBody) toModel() (models.CatalogTask, string, bool) {
 		Text:      strings.TrimSpace(b.Text),
 		Points:    points,
 		ValueType: vt,
-		Kind:      store.NormalizePlayerType(b.Kind),
 		Source:    defaultStr(b.Source, "official"),
 		Author:    strings.TrimSpace(b.Author),
 		Title:     strings.TrimSpace(b.Title),
