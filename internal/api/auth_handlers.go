@@ -2,10 +2,12 @@ package api
 
 import (
 	"errors"
+	"fmt"
 	"net"
 	"net/http"
 	"regexp"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/ur-league/backend/internal/auth"
 	"github.com/ur-league/backend/internal/models"
@@ -16,8 +18,11 @@ import (
 // Узкий набор исключает пробелы, омоглифы и спецсимволы (меньше путаницы и сюрпризов).
 var loginRe = regexp.MustCompile(`^[A-Za-z0-9_]{3,32}$`)
 
-// embarkRe — Embark ID: ник (без «#»), решётка, ровно 4 цифры — напр. «Istwood#1234».
-var embarkRe = regexp.MustCompile(`^[^#]+#\d{4}$`)
+// gameIDRe — игровой ID PUBG Mobile: только цифры, от 6 до 12.
+var gameIDRe = regexp.MustCompile(`^\d{6,12}$`)
+
+// maxGameNick - ник в игре стоит в оверлее рядом с ником на сайте, поэтому короткий.
+const maxGameNick = 32
 
 const minPasswordLen = 8
 
@@ -195,27 +200,44 @@ func (s *Server) handleLogout(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
+// PATCH /api/me {gameId?, gameNick?} - игровой ID и ник в игре; не присланное поле не меняется,
+// пустое - стирается.
 func (s *Server) handleUpdateMe(w http.ResponseWriter, r *http.Request) {
 	u, _ := userFrom(r.Context())
 	var body struct {
-		EmbarkID string `json:"embarkId"`
+		GameID   *string `json:"gameId"`
+		GameNick *string `json:"gameNick"`
 	}
 	if err := readJSON(r, &body); err != nil {
 		writeError(w, http.StatusBadRequest, "некорректный JSON")
 		return
 	}
-	embark := strings.TrimSpace(body.EmbarkID)
-	// Пусто — допустимо (очистить). Иначе строгий формат «Ник#1234».
-	if embark != "" && !embarkRe.MatchString(embark) {
-		writeError(w, http.StatusBadRequest, "Формат Embark ID: Ник#1234 (ник, решётка и ровно 4 цифры)")
+	gameID, gameNick := u.GameID, u.GameNick
+	if body.GameID != nil {
+		// ID переписывают с экрана профиля в игре, где цифры бывают разбиты пробелами.
+		gameID = strings.Join(strings.Fields(*body.GameID), "")
+	}
+	if body.GameNick != nil {
+		gameNick = strings.Join(strings.Fields(*body.GameNick), " ")
+	}
+	if gameID != "" && !gameIDRe.MatchString(gameID) {
+		writeError(w, http.StatusBadRequest, "Игровой ID — только цифры, от 6 до 12")
 		return
 	}
-	updated, err := s.Store.UpdateEmbarkID(r.Context(), u.ID, embark)
+	if utf8.RuneCountInString(gameNick) > maxGameNick {
+		writeError(w, http.StatusBadRequest, fmt.Sprintf("Ник в игре — до %d символов", maxGameNick))
+		return
+	}
+	updated, err := s.Store.UpdateGameProfile(r.Context(), u.ID, gameID, gameNick)
+	if errors.Is(err, store.ErrGameIDTaken) {
+		writeError(w, http.StatusConflict, "Этот игровой ID уже указан в профиле другого игрока")
+		return
+	}
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "не удалось обновить профиль")
 		return
 	}
-	// Держим пул актуальным: подтягиваем новый Embark ID в незакрытую заявку игрока.
-	_ = s.Store.SyncPendingRegistrationEmbark(r.Context(), u.ID, updated.EmbarkID)
+	// Держим пул актуальным: новый ID и ник сразу видны в незакрытой заявке игрока.
+	_ = s.Store.SyncPendingRegistrationGame(r.Context(), u.ID, updated.GameID, updated.GameNick)
 	writeJSON(w, http.StatusOK, updated)
 }

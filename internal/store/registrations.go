@@ -7,39 +7,39 @@ import (
 )
 
 // CreateRegistration создаёт/обновляет заявку игрока в общий пул (одна на пользователя).
-// Повторная подача обновляет embark/note и возвращает заявку в пул (status=pending).
-func (s *Store) CreateRegistration(ctx context.Context, userID, embark, note string) (models.Registration, error) {
+// Повторная подача обновляет игровой ID, ник и заметку и возвращает заявку в пул (status=pending).
+func (s *Store) CreateRegistration(ctx context.Context, userID, gameID, gameNick, note string) (models.Registration, error) {
 	const q = `
-		INSERT INTO registrations (user_id, embark_id, note)
-		VALUES ($1, $2, $3)
+		INSERT INTO registrations (user_id, game_id, game_nick, note)
+		VALUES ($1, $2, $3, $4)
 		ON CONFLICT (user_id) DO UPDATE
-			SET embark_id = EXCLUDED.embark_id, note = EXCLUDED.note,
+			SET game_id = EXCLUDED.game_id, game_nick = EXCLUDED.game_nick, note = EXCLUDED.note,
 			    status = 'pending', tournament_id = NULL, decided_at = NULL,
 			    created_at = now()
-		RETURNING id, tournament_id, user_id, embark_id, status, note, created_at, decided_at`
+		RETURNING id, tournament_id, user_id, game_id, game_nick, status, note, created_at, decided_at`
 	var r models.Registration
-	err := s.Pool.QueryRow(ctx, q, userID, embark, note).Scan(
-		&r.ID, &r.TournamentID, &r.UserID, &r.EmbarkID, &r.Status, &r.Note, &r.CreatedAt, &r.DecidedAt)
+	err := s.Pool.QueryRow(ctx, q, userID, gameID, gameNick, note).Scan(
+		&r.ID, &r.TournamentID, &r.UserID, &r.GameID, &r.GameNick, &r.Status, &r.Note, &r.CreatedAt, &r.DecidedAt)
 	return r, err
 }
 
 func (s *Store) GetRegistration(ctx context.Context, id string) (models.Registration, error) {
 	const q = `
-		SELECT r.id, r.tournament_id, r.user_id, r.embark_id, r.status, r.note, r.created_at, r.decided_at,
+		SELECT r.id, r.tournament_id, r.user_id, r.game_id, r.game_nick, r.status, r.note, r.created_at, r.decided_at,
 		       u.login, u.display_name, u.avatar_url
 		FROM registrations r
 		JOIN users u ON u.id = r.user_id
 		WHERE r.id = $1`
 	var r models.Registration
 	err := s.Pool.QueryRow(ctx, q, id).Scan(
-		&r.ID, &r.TournamentID, &r.UserID, &r.EmbarkID, &r.Status, &r.Note, &r.CreatedAt, &r.DecidedAt,
+		&r.ID, &r.TournamentID, &r.UserID, &r.GameID, &r.GameNick, &r.Status, &r.Note, &r.CreatedAt, &r.DecidedAt,
 		&r.UserLogin, &r.UserDisplayName, &r.UserAvatarURL)
 	return r, err
 }
 
 func (s *Store) ListMyRegistrations(ctx context.Context, userID string) ([]models.Registration, error) {
 	const q = `
-		SELECT r.id, r.tournament_id, r.user_id, r.embark_id, r.status, r.note, r.created_at, r.decided_at,
+		SELECT r.id, r.tournament_id, r.user_id, r.game_id, r.game_nick, r.status, r.note, r.created_at, r.decided_at,
 		       t.title
 		FROM registrations r
 		LEFT JOIN tournaments t ON t.id = r.tournament_id
@@ -55,7 +55,7 @@ func (s *Store) ListMyRegistrations(ctx context.Context, userID string) ([]model
 	for rows.Next() {
 		var r models.Registration
 		var title *string
-		if err := rows.Scan(&r.ID, &r.TournamentID, &r.UserID, &r.EmbarkID, &r.Status, &r.Note,
+		if err := rows.Scan(&r.ID, &r.TournamentID, &r.UserID, &r.GameID, &r.GameNick, &r.Status, &r.Note,
 			&r.CreatedAt, &r.DecidedAt, &title); err != nil {
 			return nil, err
 		}
@@ -70,7 +70,7 @@ func (s *Store) ListMyRegistrations(ctx context.Context, userID string) ([]model
 // ListPool — открытые заявки (ещё не распределённые), кто подал раньше — выше.
 func (s *Store) ListPool(ctx context.Context) ([]models.Registration, error) {
 	const q = `
-		SELECT r.id, r.tournament_id, r.user_id, r.embark_id, r.status, r.note, r.created_at, r.decided_at,
+		SELECT r.id, r.tournament_id, r.user_id, r.game_id, r.game_nick, r.status, r.note, r.created_at, r.decided_at,
 		       u.login, u.display_name, u.avatar_url
 		FROM registrations r
 		JOIN users u ON u.id = r.user_id
@@ -85,7 +85,7 @@ func (s *Store) ListPool(ctx context.Context) ([]models.Registration, error) {
 	out := []models.Registration{}
 	for rows.Next() {
 		var r models.Registration
-		if err := rows.Scan(&r.ID, &r.TournamentID, &r.UserID, &r.EmbarkID, &r.Status, &r.Note,
+		if err := rows.Scan(&r.ID, &r.TournamentID, &r.UserID, &r.GameID, &r.GameNick, &r.Status, &r.Note,
 			&r.CreatedAt, &r.DecidedAt, &r.UserLogin, &r.UserDisplayName, &r.UserAvatarURL); err != nil {
 			return nil, err
 		}
@@ -104,7 +104,7 @@ func (s *Store) ListPoolPage(ctx context.Context, limit, offset int) ([]models.R
 		offset = 0
 	}
 	const q = `
-		SELECT r.id, r.tournament_id, r.user_id, r.embark_id, r.status, r.note, r.created_at, r.decided_at,
+		SELECT r.id, r.tournament_id, r.user_id, r.game_id, r.game_nick, r.status, r.note, r.created_at, r.decided_at,
 		       u.login, u.display_name, u.avatar_url,
 		       COUNT(*) OVER() AS total
 		FROM registrations r
@@ -122,7 +122,7 @@ func (s *Store) ListPoolPage(ctx context.Context, limit, offset int) ([]models.R
 	total := 0
 	for rows.Next() {
 		var r models.Registration
-		if err := rows.Scan(&r.ID, &r.TournamentID, &r.UserID, &r.EmbarkID, &r.Status, &r.Note,
+		if err := rows.Scan(&r.ID, &r.TournamentID, &r.UserID, &r.GameID, &r.GameNick, &r.Status, &r.Note,
 			&r.CreatedAt, &r.DecidedAt, &r.UserLogin, &r.UserDisplayName, &r.UserAvatarURL, &total); err != nil {
 			return nil, 0, err
 		}
@@ -131,13 +131,13 @@ func (s *Store) ListPoolPage(ctx context.Context, limit, offset int) ([]models.R
 	return out, total, rows.Err()
 }
 
-// SyncPendingRegistrationEmbark — обновляет Embark ID в незакрытой (pending) заявке игрока,
-// чтобы пул показывал актуальный ID после смены его в профиле. У принятых/отклонённых
-// заявок остаётся снимок на момент решения.
-func (s *Store) SyncPendingRegistrationEmbark(ctx context.Context, userID, embark string) error {
+// SyncPendingRegistrationGame — обновляет игровой ID и ник в незакрытой (pending) заявке игрока,
+// чтобы пул показывал актуальные после смены в профиле. У принятых/отклонённых заявок остаётся
+// снимок на момент решения.
+func (s *Store) SyncPendingRegistrationGame(ctx context.Context, userID, gameID, gameNick string) error {
 	_, err := s.Pool.Exec(ctx,
-		`UPDATE registrations SET embark_id = $2 WHERE user_id = $1 AND status = 'pending'`,
-		userID, embark)
+		`UPDATE registrations SET game_id = $2, game_nick = $3 WHERE user_id = $1 AND status = 'pending'`,
+		userID, gameID, gameNick)
 	return err
 }
 
@@ -147,15 +147,6 @@ func (s *Store) MarkRegistrationPlaced(ctx context.Context, userID, tournamentID
 	_, err := s.Pool.Exec(ctx,
 		`UPDATE registrations SET status = 'accepted', tournament_id = $2, decided_at = now()
 		   WHERE user_id = $1 AND status = 'pending'`, userID, tournamentID)
-	return err
-}
-
-// RevertRegistrationToPool — вернуть заявку в пул, если игрок был поставлен в этот
-// турнир из заявки (его убрали из участников). No-op, если заявки/привязки нет.
-func (s *Store) RevertRegistrationToPool(ctx context.Context, userID, tournamentID string) error {
-	_, err := s.Pool.Exec(ctx,
-		`UPDATE registrations SET status = 'pending', tournament_id = NULL, decided_at = NULL
-		   WHERE user_id = $1 AND tournament_id = $2 AND status = 'accepted'`, userID, tournamentID)
 	return err
 }
 

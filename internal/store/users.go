@@ -11,15 +11,18 @@ import (
 	"github.com/ur-league/backend/internal/models"
 )
 
-const userCols = `id, login, display_name, avatar_url, email, role, embark_id, created_at`
+const userCols = `id, login, display_name, avatar_url, email, role, game_id, game_nick, created_at`
 
 // ErrLoginTaken — логин уже занят (нарушение уникального индекса users_login_lower_key).
 var ErrLoginTaken = errors.New("логин уже занят")
 
+// ErrGameIDTaken — этот игровой ID уже указал другой игрок.
+var ErrGameIDTaken = errors.New("игровой ID уже занят")
+
 func scanUser(row pgx.Row) (models.User, error) {
 	var u models.User
 	var role string
-	err := row.Scan(&u.ID, &u.Login, &u.DisplayName, &u.AvatarURL, &u.Email, &role, &u.EmbarkID, &u.CreatedAt)
+	err := row.Scan(&u.ID, &u.Login, &u.DisplayName, &u.AvatarURL, &u.Email, &role, &u.GameID, &u.GameNick, &u.CreatedAt)
 	u.Role = models.Role(role)
 	return u, err
 }
@@ -81,7 +84,7 @@ func (s *Store) GetUserSession(ctx context.Context, id string) (models.User, tim
 	var role string
 	var validAfter time.Time
 	err := s.Pool.QueryRow(ctx, `SELECT `+userCols+`, tokens_valid_after FROM users WHERE id = $1`, id).
-		Scan(&u.ID, &u.Login, &u.DisplayName, &u.AvatarURL, &u.Email, &role, &u.EmbarkID, &u.CreatedAt, &validAfter)
+		Scan(&u.ID, &u.Login, &u.DisplayName, &u.AvatarURL, &u.Email, &role, &u.GameID, &u.GameNick, &u.CreatedAt, &validAfter)
 	u.Role = models.Role(role)
 	return u, validAfter, err
 }
@@ -206,7 +209,7 @@ func (s *Store) PlayerAggregate(ctx context.Context, userID string) (models.Play
 }
 
 // ListUsersOverview — страница пользователей с агрегатами участия (раздел «Пользователи»).
-// Пагинация (limit/offset), поиск (q по логину/имени/Embark ID/email) и сортировка (sort)
+// Пагинация (limit/offset), поиск (q по логину/имени/игровому ID и нику/email) и сортировка (sort)
 // делаются на бэке. total — всего подходящих под поиск. Участие считаем как в PlayerHistory.
 func (s *Store) ListUsersOverview(ctx context.Context, limit, offset int, q, sort string) ([]models.UserOverview, int, error) {
 	if limit <= 0 || limit > 100 {
@@ -226,7 +229,7 @@ func (s *Store) ListUsersOverview(ctx context.Context, limit, offset int, q, sor
 		orderBy = "u.display_name, u.login"
 	}
 	query := `
-		SELECT u.id, u.login, u.display_name, u.avatar_url, u.email, u.role, u.embark_id, u.created_at,
+		SELECT u.id, u.login, u.display_name, u.avatar_url, u.email, u.role, u.game_id, u.game_nick, u.created_at,
 		       (u.password_hash LIKE '!%') AS is_placeholder,
 		       COALESCE(s.tournaments, 0), COALESCE(s.wins, 0), COALESCE(s.points, 0), COALESCE(s.participations, 0),
 		       COUNT(*) OVER() AS total
@@ -243,7 +246,7 @@ func (s *Store) ListUsersOverview(ctx context.Context, limit, offset int, q, sor
 			   OR (jsonb_typeof(p.members) = 'array'
 			       AND p.members @> jsonb_build_array(jsonb_build_object('userId', u.id::text)))
 		) s ON true
-		WHERE ($3 = '' OR u.login ILIKE $4 OR u.display_name ILIKE $4 OR u.embark_id ILIKE $4 OR u.email ILIKE $4)
+		WHERE ($3 = '' OR u.login ILIKE $4 OR u.display_name ILIKE $4 OR u.game_id ILIKE $4 OR u.game_nick ILIKE $4 OR u.email ILIKE $4)
 		ORDER BY ` + orderBy + `
 		LIMIT $1 OFFSET $2`
 	qt := strings.TrimSpace(q)
@@ -261,7 +264,7 @@ func (s *Store) ListUsersOverview(ctx context.Context, limit, offset int, q, sor
 		var o models.UserOverview
 		var role string
 		if err := rows.Scan(&o.User.ID, &o.User.Login, &o.User.DisplayName, &o.User.AvatarURL,
-			&o.User.Email, &role, &o.User.EmbarkID, &o.User.CreatedAt, &o.IsPlaceholder,
+			&o.User.Email, &role, &o.User.GameID, &o.User.GameNick, &o.User.CreatedAt, &o.IsPlaceholder,
 			&o.Tournaments, &o.Wins, &o.Points, &o.Participations, &total); err != nil {
 			return nil, 0, err
 		}
@@ -277,8 +280,14 @@ func (s *Store) SetRole(ctx context.Context, userID string, role models.Role) er
 	return err
 }
 
-func (s *Store) UpdateEmbarkID(ctx context.Context, userID, embark string) (models.User, error) {
-	return scanUser(s.Pool.QueryRow(ctx,
-		`UPDATE users SET embark_id = $2, updated_at = now() WHERE id = $1 RETURNING `+userCols,
-		userID, embark))
+// UpdateGameProfile сохраняет игровой ID и ник; ID, который уже у другого игрока, - ErrGameIDTaken.
+func (s *Store) UpdateGameProfile(ctx context.Context, userID, gameID, gameNick string) (models.User, error) {
+	u, err := scanUser(s.Pool.QueryRow(ctx,
+		`UPDATE users SET game_id = $2, game_nick = $3, updated_at = now() WHERE id = $1 RETURNING `+userCols,
+		userID, gameID, gameNick))
+	var pgErr *pgconn.PgError
+	if errors.As(err, &pgErr) && pgErr.Code == "23505" {
+		return models.User{}, ErrGameIDTaken
+	}
+	return u, err
 }

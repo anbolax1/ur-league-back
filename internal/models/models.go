@@ -51,7 +51,8 @@ type User struct {
 	AvatarURL   string    `json:"avatarUrl"`
 	Email       string    `json:"-"`
 	Role        Role      `json:"role"`
-	EmbarkID    string    `json:"embarkId"`
+	GameID      string    `json:"gameId"`   // игровой ID PUBG Mobile; в чужом профиле частично скрыт
+	GameNick    string    `json:"gameNick"` // ник в игре
 	CreatedAt   time.Time `json:"createdAt"`
 	Tags        []UserTag `json:"tags,omitempty"`
 }
@@ -289,7 +290,8 @@ type Registration struct {
 	ID              string     `json:"id"`
 	TournamentID    *string    `json:"tournamentId,omitempty"` // куда поставлен; nil — пока в пуле
 	UserID          string     `json:"userId"`
-	EmbarkID        string     `json:"embarkId"`
+	GameID          string     `json:"gameId"`
+	GameNick        string     `json:"gameNick"`
 	Status          string     `json:"status"`
 	Note            string     `json:"note"`
 	CreatedAt       time.Time  `json:"createdAt"`

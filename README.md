@@ -181,11 +181,11 @@ cd backend
 | POST | `/api/auth/login` | все | вход `{login, password}` → сессия |
 | POST | `/api/auth/logout` | все | выход (сброс cookie) |
 | GET | `/api/auth/me` | auth | текущий пользователь |
-| PATCH | `/api/me` | auth | обновить Embark ID |
+| PATCH | `/api/me` | auth | игровой ID и ник в игре `{gameId, gameNick}` (занятый ID — 409) |
 | GET | `/api/me/registrations` | auth | мои заявки |
 | GET | `/api/tournaments` | все | список турниров (`?status=`) |
 | GET | `/api/tournaments/{id}` | все | турнир с участниками и раундами |
-| POST | `/api/registrations` | auth | подать заявку в общий пул (Embark ID, заметка) |
+| POST | `/api/registrations` | auth | подать заявку в общий пул (ID и ник из профиля, заметка) |
 | GET | `/api/leaderboard?mode=1x1\|2x2` | все | рейтинг |
 | GET | `/api/rules` | все | задания с протоколами и легендарки |
 | GET | `/api/overlay/state` | все | текущее состояние оверлея |

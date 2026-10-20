@@ -96,6 +96,10 @@ func (s *Server) handleGetPlayer(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	u.Tags, _ = s.Store.UserTags(r.Context(), u.ID, true)
+	// Целиком игровой ID видят сам игрок и организатор: по ID игрока находят в игре.
+	if viewer, ok := userFrom(r.Context()); !ok || (viewer.ID != u.ID && !viewer.Role.AtLeast(models.RoleSuperadmin)) {
+		u.GameID = maskGameID(u.GameID)
+	}
 	history, err := s.Store.PlayerHistory(r.Context(), u.ID)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
@@ -173,4 +177,13 @@ func (s *Server) handleGetPlayer(w http.ResponseWriter, r *http.Request) {
 		Teams:       teams,
 		Patches:     patches,
 	})
+}
+
+// maskGameID оставляет от игрового ID две первые и две последние цифры - этого хватает, чтобы
+// узнать свой ID, но не чтобы найти игрока в игре.
+func maskGameID(id string) string {
+	if len(id) <= 4 {
+		return strings.Repeat("•", len(id))
+	}
+	return id[:2] + strings.Repeat("•", len(id)-4) + id[len(id)-2:]
 }
