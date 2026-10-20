@@ -35,7 +35,7 @@ func (c *patchCase) match(winner int, a, b sideSpec, opts ...func(*patchMatch)) 
 	c.total++
 	m := patchMatch{
 		id: "m" + string(rune('a'+c.total-1)), at: c.day.Add(time.Duration(c.n) * time.Hour),
-		mult: 1, games: 1, winner: winner, roundMaps: map[int]string{1: "Космопорт", 2: "Дамба"},
+		mult: 1, games: 1, winner: winner, roundMaps: map[int]string{1: "Мирамар", 2: "Эрангель"},
 	}
 	for i, sp := range []sideSpec{a, b} {
 		k := sp.knocks

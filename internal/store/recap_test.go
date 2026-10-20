@@ -16,18 +16,18 @@ func TestBuildRecap(t *testing.T) {
 		season: models.Season{ID: "s", Status: "active"},
 		start:  1000,
 		logins: map[string]string{"a": "ALPHA", "b": "BETA", "g": "GAMMA"},
-		maps:   []models.MapInfo{{Code: "dam", Name: "Дамба"}, {Code: "spaceport", Name: "Космопорт"}},
+		maps:   []models.MapInfo{{Code: "erangel", Name: "Эрангель"}, {Code: "miramar", Name: "Мирамар"}},
 		matches: []recapRaw{
 			{id: "m1", at: at(17, 15), mult: 1, games: 1, winner: 0, users: [2]string{"a", "b"},
-				rounds: []recapRawRound{{number: 1, mapCode: "dam", played: true}}},
+				rounds: []recapRawRound{{number: 1, mapCode: "erangel", played: true}}},
 			{id: "m2", at: at(18, 19), mult: 2, games: 1, winner: 1, users: [2]string{"a", "g"}, total: [2]int{5, 9},
 				rounds: []recapRawRound{
-					{number: 1, mapCode: "dam", played: true, entries: true, points: [2]int{5, 2}, knocks: [2]int{1, 0},
+					{number: 1, mapCode: "erangel", played: true, entries: true, points: [2]int{5, 2}, knocks: [2]int{1, 0},
 						tasks: []recapRawTask{{side: 1, name: "Т", category: "task", doneBy: 1}, {side: 0, name: "П", category: "protocol", doneBy: -1}}},
-					{number: 2, mapCode: "spaceport", played: true, entries: true, points: [2]int{0, 7}, knocks: [2]int{0, 2}},
+					{number: 2, mapCode: "miramar", played: true, entries: true, points: [2]int{0, 7}, knocks: [2]int{0, 2}},
 				}},
 			{id: "m3", at: at(20, 15), mult: 2, games: 2, winner: 0, users: [2]string{"b", "g"},
-				rounds: []recapRawRound{{number: 1, mapCode: "spaceport", played: true}}},
+				rounds: []recapRawRound{{number: 1, mapCode: "miramar", played: true}}},
 		},
 		history: []recapHist{
 			{user: "a", tournament: "m1", at: at(17, 15), delta: 50},
