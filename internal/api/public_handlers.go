@@ -6,6 +6,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/ur-league/backend/internal/models"
+	"github.com/ur-league/backend/internal/store"
 )
 
 // handleGetTeam — публичная страница команды 2×2: состав + статистика + аналитика + динамика MMR.
@@ -25,7 +26,7 @@ func (s *Server) handleGetTeam(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleLeaderboard(w http.ResponseWriter, r *http.Request) {
 	mode := r.URL.Query().Get("mode")
-	if mode != "2x2" {
+	if !store.IsTeamMode(mode) {
 		mode = "1x1"
 	}
 	// season: "all" — за всё время; пусто — текущий активный сезон; иначе конкретный id.
@@ -40,10 +41,10 @@ func (s *Server) handleLeaderboard(w http.ResponseWriter, r *http.Request) {
 			seasonID = "" // активного нет — показываем за всё время
 		}
 	}
-	// 2×2 — рейтинг по КОМАНДАМ (пара игроков = команда с одним MMR); 1×1 — по игрокам.
+	// Составы 2×2 и 3×3 — рейтинг по КОМАНДАМ (состав = команда с одним MMR); 1×1 — по игрокам.
 	var rows any
-	if mode == "2x2" {
-		teams, err := s.Store.TeamLeaderboard(r.Context(), seasonID)
+	if store.IsTeamMode(mode) {
+		teams, err := s.Store.TeamLeaderboard(r.Context(), mode, seasonID)
 		if err != nil {
 			writeError(w, http.StatusInternalServerError, err.Error())
 			return

@@ -81,10 +81,10 @@ func (s *Store) Matchup(ctx context.Context, tournamentID string) (models.Matchu
 	return out, err
 }
 
-// matchupSide - сторона с игроками: у 2×2 оба из состава, у 1×1 один.
+// matchupSide - сторона с игроками: у составов все из состава, у 1×1 один.
 func (s *Store) matchupSide(ctx context.Context, mode string, p models.Participant) models.MatchupSide {
 	side := models.MatchupSide{ParticipantID: p.ID, Players: []models.TeamMember{}}
-	if mode == "2x2" {
+	if IsTeamMode(mode) {
 		side.TeamKey = sideKey(mode, p)
 	}
 	for _, id := range participantUsers(p) {
@@ -97,10 +97,10 @@ func (s *Store) matchupSide(ctx context.Context, mode string, p models.Participa
 	return side
 }
 
-// sideKey - чей рейтинг у стороны: игрока (1×1) или команды (2×2); пусто - рейтинга нет.
+// sideKey - чей рейтинг у стороны: игрока (1×1) или команды (2×2, 3×3); пусто - рейтинга нет.
 func sideKey(mode string, p models.Participant) string {
-	if mode == "2x2" {
-		key, _, _, _ := teamKeyFromParticipant(p)
+	if IsTeamMode(mode) {
+		key, _, _ := teamKeyFromParticipant(p)
 		return key
 	}
 	if p.UserID == nil {
@@ -120,8 +120,8 @@ func (s *Store) seasonStanding(ctx context.Context, t models.Tournament, rule se
 	if t.Status == "finished" {
 		return out, nil
 	}
-	if t.Mode == "2x2" {
-		rows, err := s.TeamLeaderboard(ctx, rule.Key)
+	if IsTeamMode(t.Mode) {
+		rows, err := s.TeamLeaderboard(ctx, t.Mode, rule.Key)
 		if err != nil {
 			return nil, err
 		}
@@ -140,12 +140,12 @@ func (s *Store) seasonStanding(ctx context.Context, t models.Tournament, rule se
 	return out, nil
 }
 
-// headToHead - другие сыгранные матчи тех же сторон: тот же игрок (1×1) или тот же состав (2×2).
+// headToHead - другие сыгранные матчи тех же сторон: тот же игрок (1×1) или тот же состав (2×2, 3×3).
 func (s *Store) headToHead(ctx context.Context, t models.Tournament, a, b models.Participant) (models.HeadToHead, error) {
 	out := models.HeadToHead{Matches: []models.HeadToHeadMatch{}}
 	var argA, argB any
 	cond := "%s.user_id = $%d"
-	if t.Mode == "2x2" {
+	if IsTeamMode(t.Mode) {
 		ma, okA := membersFilter(a)
 		mb, okB := membersFilter(b)
 		if !okA || !okB {
@@ -190,12 +190,16 @@ func (s *Store) headToHead(ctx context.Context, t models.Tournament, a, b models
 	return out, rows.Err()
 }
 
-// membersFilter - состав 2×2 для поиска по participants.members; у неполного состава встреч не ищем.
+// membersFilter - состав стороны для поиска по participants.members; у неполного состава встреч не ищем.
 func membersFilter(p models.Participant) ([]byte, bool) {
 	users := participantUsers(p)
-	if len(users) != 2 {
+	if len(users) != 2 && len(users) != 3 {
 		return nil, false
 	}
-	raw, err := json.Marshal([]map[string]string{{"userId": users[0]}, {"userId": users[1]}})
+	filter := make([]map[string]string, 0, len(users))
+	for _, id := range users {
+		filter = append(filter, map[string]string{"userId": id})
+	}
+	raw, err := json.Marshal(filter)
 	return raw, err == nil
 }

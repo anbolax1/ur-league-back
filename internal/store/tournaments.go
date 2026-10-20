@@ -109,9 +109,10 @@ func (s *Store) DeleteTournament(ctx context.Context, id string) error {
 func (s *Store) ListTournaments(ctx context.Context, status string) ([]models.Tournament, error) {
 	q := `SELECT ` + tournamentCols + `,
 		(SELECT COUNT(*) FROM participants WHERE tournament_id = tournaments.id),
-		CASE WHEN tournaments.mode = '2x2' THEN (
+		CASE WHEN tournaments.mode IN ('2x2', '3x3') THEN (
 			(SELECT COUNT(*) FROM participants p WHERE p.tournament_id = tournaments.id) < 2
-			OR EXISTS (SELECT 1 FROM participants p WHERE p.tournament_id = tournaments.id AND jsonb_array_length(p.members) < 2)
+			OR EXISTS (SELECT 1 FROM participants p WHERE p.tournament_id = tournaments.id
+			           AND jsonb_array_length(p.members) < CASE tournaments.mode WHEN '3x3' THEN 3 ELSE 2 END)
 		) ELSE (
 			(SELECT COUNT(*) FROM participants p WHERE p.tournament_id = tournaments.id) < 2
 		) END,

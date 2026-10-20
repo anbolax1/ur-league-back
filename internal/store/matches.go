@@ -16,7 +16,7 @@ import (
 // ErrLiveMatchExists - уже идёт другой матч: новый не создаём, пока старый не завершён или не отменён.
 var ErrLiveMatchExists = errors.New("уже идёт другой матч")
 
-// MatchSide - сторона нового матча: игрок (1×1) или пара игроков (2×2).
+// MatchSide - сторона нового матча: игрок (1×1) или состав из двух-трёх игроков (2×2, 3×3).
 type MatchSide struct {
 	UserID  string
 	Members []string
@@ -54,12 +54,12 @@ func aGoesFirst(a, b sideInfo, coin func() bool) bool {
 
 // describeSide собирает участника стороны, его MMR в текущем сезоне и опыт прошлых сезонов.
 func (s *Store) describeSide(ctx context.Context, mode string, side MatchSide, rule seasonRule) (sideInfo, error) {
-	if mode == "2x2" {
-		if len(side.Members) != 2 || side.Members[0] == side.Members[1] {
+	if IsTeamMode(mode) {
+		if len(side.Members) != TeamSize(mode) || hasDuplicates(side.Members) {
 			return sideInfo{}, ErrConflict
 		}
-		members := make([]map[string]string, 0, 2)
-		names := make([]string, 0, 2)
+		members := make([]map[string]string, 0, len(side.Members))
+		names := make([]string, 0, len(side.Members))
 		for _, id := range side.Members {
 			u, err := s.GetUser(ctx, id)
 			if err != nil {
@@ -74,7 +74,7 @@ func (s *Store) describeSide(ctx context.Context, mode string, side MatchSide, r
 			name = strings.Join(names, " & ")
 		}
 		p := models.Participant{Kind: "team", Name: name, Members: raw}
-		key, _, _, _ := teamKeyFromParticipant(p)
+		key, _, _ := teamKeyFromParticipant(p)
 		mmr, err := s.teamSeasonMmr(ctx, key, rule)
 		if err != nil {
 			return sideInfo{}, err
@@ -104,6 +104,31 @@ func (s *Store) describeSide(ctx context.Context, mode string, side MatchSide, r
 	return sideInfo{part: models.Participant{Kind: "player", Name: userName(u), UserID: &uid}, mmr: mmr, prevGames: prev}, nil
 }
 
+func hasDuplicates(ids []string) bool {
+	seen := map[string]bool{}
+	for _, id := range ids {
+		if seen[id] {
+			return true
+		}
+		seen[id] = true
+	}
+	return false
+}
+
+// sharePlayers - есть ли игрок сразу в обеих сторонах: в одной группе с ведущим он может быть только у одной.
+func sharePlayers(a, b models.Participant) bool {
+	in := map[string]bool{}
+	for _, id := range participantUsers(a) {
+		in[id] = true
+	}
+	for _, id := range participantUsers(b) {
+		if in[id] {
+			return true
+		}
+	}
+	return false
+}
+
 func userName(u models.User) string {
 	if strings.TrimSpace(u.DisplayName) != "" {
 		return u.DisplayName
@@ -125,7 +150,7 @@ func (s *Store) CreateMatch(ctx context.Context, in NewMatch) (models.Tournament
 			return models.Tournament{}, ErrLiveMatchExists
 		}
 	}
-	if in.Mode != "2x2" {
+	if !IsTeamMode(in.Mode) {
 		in.Mode = "1x1"
 	}
 	if in.RatingMultiplier != 2 {
@@ -141,7 +166,7 @@ func (s *Store) CreateMatch(ctx context.Context, in NewMatch) (models.Tournament
 	if err != nil {
 		return models.Tournament{}, err
 	}
-	if in.Mode == "1x1" && *a.part.UserID == *b.part.UserID {
+	if sharePlayers(a.part, b.part) {
 		return models.Tournament{}, ErrConflict
 	}
 	if !aGoesFirst(a, b, func() bool { return rand.IntN(2) == 0 }) {

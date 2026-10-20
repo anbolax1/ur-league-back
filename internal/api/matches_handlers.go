@@ -183,9 +183,9 @@ func (s *Server) handleCreateMatch(w http.ResponseWriter, r *http.Request) {
 		Prize: prize,
 	}
 	for i, sd := range b.Sides {
-		if b.Mode == "2x2" {
-			if len(sd.Members) != 2 {
-				writeError(w, http.StatusBadRequest, "в команде 2×2 — два игрока")
+		if store.IsTeamMode(b.Mode) {
+			if len(sd.Members) != store.TeamSize(b.Mode) {
+				writeError(w, http.StatusBadRequest, fmt.Sprintf("в составе %s — %d игрока", strings.Replace(b.Mode, "x", "×", 1), store.TeamSize(b.Mode)))
 				return
 			}
 		} else if strings.TrimSpace(sd.UserID) == "" {
@@ -200,7 +200,7 @@ func (s *Server) handleCreateMatch(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if errors.Is(err, store.ErrConflict) {
-		writeError(w, http.StatusBadRequest, "стороны должны быть разными игроками")
+		writeError(w, http.StatusBadRequest, "один игрок может быть только в одной стороне")
 		return
 	}
 	if errors.Is(err, store.ErrNotFound) {

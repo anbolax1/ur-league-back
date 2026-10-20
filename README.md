@@ -186,7 +186,8 @@ cd backend
 | GET | `/api/tournaments` | все | список турниров (`?status=`) |
 | GET | `/api/tournaments/{id}` | все | турнир с участниками и раундами |
 | POST | `/api/registrations` | auth | подать заявку в общий пул (ID и ник из профиля, заметка) |
-| GET | `/api/leaderboard?mode=1x1\|2x2` | все | рейтинг |
+| GET | `/api/leaderboard?mode=1x1\|2x2\|3x3` | все | рейтинг: игроки 1×1 или команды своего формата |
+| GET | `/api/teams/{teamKey}` | все | страница команды 2×2 или 3×3 |
 | GET | `/api/rules` | все | задания с протоколами и легендарки |
 | GET | `/api/overlay/state` | все | текущее состояние оверлея |
 | GET | `/api/ws/overlay` | все | WebSocket: поток состояния для OBS |

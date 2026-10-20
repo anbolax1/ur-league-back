@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"math"
 	"sort"
+	"strings"
 	"time"
 
 	"github.com/ur-league/backend/internal/models"
@@ -73,7 +74,7 @@ func eloWinMagnitude(winnerMmr, loserMmr, mult, games, k int) int {
 	return total
 }
 
-// participantUsers — аккаунты стороны: одиночный user_id (1x1) либо составы members[].userId (2x2).
+// participantUsers — аккаунты стороны: одиночный user_id (1x1) либо состав members[].userId (2x2, 3x3).
 func participantUsers(p models.Participant) []string {
 	seen := map[string]bool{}
 	out := []string{}
@@ -99,16 +100,31 @@ func participantUsers(p models.Participant) []string {
 	return out
 }
 
-// teamKeyFromParticipant возвращает ключ команды 2×2 = отсортированная пара userId
-// (member_a < member_b). ok=false, если состав неполный (нет ровно двух игроков) —
-// такую команду рейтинговать нельзя.
-func teamKeyFromParticipant(p models.Participant) (key, memberA, memberB string, ok bool) {
+// IsTeamMode - матч составов: стороны - команды из двух (2×2) или трёх (3×3) игроков.
+func IsTeamMode(mode string) bool {
+	return mode == "2x2" || mode == "3x3"
+}
+
+// TeamSize - сколько игроков в стороне матча этого формата.
+func TeamSize(mode string) int {
+	switch mode {
+	case "2x2":
+		return 2
+	case "3x3":
+		return 3
+	}
+	return 1
+}
+
+// teamKeyFromParticipant возвращает ключ команды - отсортированные userId состава через «|» - и сам
+// состав. ok=false, если в составе не два и не три игрока: такую команду рейтинговать нельзя.
+func teamKeyFromParticipant(p models.Participant) (key string, members []string, ok bool) {
 	users := participantUsers(p)
-	if len(users) != 2 {
-		return "", "", "", false
+	if len(users) != 2 && len(users) != 3 {
+		return "", nil, false
 	}
 	sort.Strings(users)
-	return users[0] + "|" + users[1], users[0], users[1], true
+	return strings.Join(users, "|"), users, true
 }
 
 // userSeasonMmr - MMR игрока в сезоне: стартовый MMR сезона плюс изменения за его матчи.
@@ -125,13 +141,13 @@ func (s *Store) GetUserMmr(ctx context.Context, userID, mode string) (int, error
 	return s.userSeasonMmr(ctx, userID, mode, s.activeSeasonRule(ctx))
 }
 
-// BestTeamMmr - лучший MMR в текущем сезоне среди команд 2×2, где состоит игрок
+// BestTeamMmr - лучший MMR в текущем сезоне среди команд формата mode (2x2, 3x3), где состоит игрок
 // (старт сезона, если команд нет). Для профиля.
-func (s *Store) BestTeamMmr(ctx context.Context, userID string) (int, error) {
+func (s *Store) BestTeamMmr(ctx context.Context, userID, mode string) (int, error) {
 	start := s.activeSeasonRule(ctx).Start
 	var mmr *int
 	err := s.Pool.QueryRow(ctx,
-		`SELECT MAX(mmr) FROM team_mmr WHERE member_a=$1 OR member_b=$1`, userID).Scan(&mmr)
+		`SELECT MAX(mmr) FROM team_mmr WHERE mode = $2 AND $1 IN (member_a, member_b, member_c)`, userID, mode).Scan(&mmr)
 	if err != nil {
 		return start, err
 	}
@@ -162,13 +178,17 @@ func (s *Store) recomputeUserMmr(ctx context.Context, userID, mode string) error
 	return err
 }
 
-// ensureTeam гарантирует строку команды в team_mmr (состав и название).
-func (s *Store) ensureTeam(ctx context.Context, key, memberA, memberB, name string) error {
+// ensureTeam гарантирует строку команды в team_mmr (состав и название); формат - по числу игроков.
+func (s *Store) ensureTeam(ctx context.Context, key string, members []string, name string) error {
+	mode, third := "2x2", (*string)(nil)
+	if len(members) == 3 {
+		mode, third = "3x3", &members[2]
+	}
 	_, err := s.Pool.Exec(ctx, `
-		INSERT INTO team_mmr (team_key, member_a, member_b, mmr, name)
-		VALUES ($1,$2,$3,$4,$5)
+		INSERT INTO team_mmr (team_key, member_a, member_b, member_c, mode, mmr, name)
+		VALUES ($1,$2,$3,$4,$5,$6,$7)
 		ON CONFLICT (team_key) DO UPDATE SET name = EXCLUDED.name WHERE EXCLUDED.name <> ''`,
-		key, memberA, memberB, StartMmr, name)
+		key, members[0], members[1], third, mode, StartMmr, name)
 	return err
 }
 
@@ -217,8 +237,8 @@ func (s *Store) RefreshMmrCaches(ctx context.Context) error {
 // ApplyTournamentMmr пересчитывает MMR по итогу турнира (турнир нового концепта = один матч,
 // ровно две стороны). Идемпотентно: сначала откатывает прежние начисления этого турнира, затем
 // начисляет заново (выдерживает повторный finished и смену победителя). Без победителя или если
-// сторон не ровно две — MMR не двигается. 1×1 — рейтинг игроков (user_mmr); 2×2 — рейтинг КОМАНД
-// (team_mmr по паре userId). Как считается жетон ×2 - см. eloWinMagnitude.
+// сторон не ровно две — MMR не двигается. 1×1 — рейтинг игроков (user_mmr); 2×2 и 3×3 — рейтинг
+// КОМАНД (team_mmr по составу). Как считается жетон ×2 - см. eloWinMagnitude.
 func (s *Store) ApplyTournamentMmr(ctx context.Context, tournamentID string) error {
 	t, err := s.GetTournament(ctx, tournamentID)
 	if err != nil {
@@ -254,7 +274,7 @@ func (s *Store) ApplyTournamentMmr(ctx context.Context, tournamentID string) err
 	if err != nil {
 		return err
 	}
-	if t.Mode == "2x2" {
+	if IsTeamMode(t.Mode) {
 		return s.applyTeamMatch(ctx, tournamentID, winner, loser, mult, t.Games, rule)
 	}
 	return s.applyUserMatch(ctx, tournamentID, winner, loser, mult, t.Games, rule)
@@ -308,17 +328,17 @@ func (s *Store) insertUserMmrHistory(ctx context.Context, tournamentID, userID, 
 	return err
 }
 
-// applyTeamMatch — начисление 2×2 (рейтинг КОМАНД). Неполные составы не рейтингуются.
+// applyTeamMatch — начисление составов 2×2 и 3×3 (рейтинг КОМАНД). Неполные составы не рейтингуются.
 func (s *Store) applyTeamMatch(ctx context.Context, tournamentID string, winner, loser models.Participant, mult, games int, rule seasonRule) error {
-	wk, wa, wb, ok1 := teamKeyFromParticipant(winner)
-	lk, la, lb, ok2 := teamKeyFromParticipant(loser)
+	wk, wm, ok1 := teamKeyFromParticipant(winner)
+	lk, lm, ok2 := teamKeyFromParticipant(loser)
 	if !ok1 || !ok2 || wk == lk {
 		return nil
 	}
-	if err := s.ensureTeam(ctx, wk, wa, wb, winner.Name); err != nil {
+	if err := s.ensureTeam(ctx, wk, wm, winner.Name); err != nil {
 		return err
 	}
-	if err := s.ensureTeam(ctx, lk, la, lb, loser.Name); err != nil {
+	if err := s.ensureTeam(ctx, lk, lm, loser.Name); err != nil {
 		return err
 	}
 	rw, err := s.teamSeasonMmr(ctx, wk, rule)
@@ -412,14 +432,14 @@ func (s *Store) RevertTournamentMmr(ctx context.Context, tournamentID string) er
 }
 
 // PopulateTournamentMmrChanges заполняет t.MmrChanges — изменение MMR каждой стороны за ЭТОТ матч
-// (из mmr_history для 1×1, из team_mmr_history для 2×2). Пусто, если матч ещё не начислен.
+// (из mmr_history для 1×1, из team_mmr_history для составов). Пусто, если матч ещё не начислен.
 func (s *Store) PopulateTournamentMmrChanges(ctx context.Context, t *models.Tournament) {
 	t.MmrChanges = []models.ParticipantMmr{}
 	for _, p := range t.Participants {
 		var before, after, delta int
 		var err error
-		if t.Mode == "2x2" {
-			key, _, _, ok := teamKeyFromParticipant(p)
+		if IsTeamMode(t.Mode) {
+			key, _, ok := teamKeyFromParticipant(p)
 			if !ok {
 				continue
 			}

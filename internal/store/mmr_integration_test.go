@@ -99,7 +99,7 @@ func TestMMRIntegration(t *testing.T) {
 		}
 	}
 	assertTeam := func(u models.User, want int) {
-		got, err := st.BestTeamMmr(ctx, u.ID)
+		got, err := st.BestTeamMmr(ctx, u.ID, "2x2")
 		if err != nil {
 			t.Fatalf("BestTeamMmr: %v", err)
 		}
@@ -173,7 +173,7 @@ func TestMMRIntegration(t *testing.T) {
 	if err := st.ApplyTournamentMmr(ctx, tour2.ID); err != nil {
 		t.Fatalf("re-apply for lb: %v", err)
 	}
-	rows, err := st.TeamLeaderboard(ctx, "")
+	rows, err := st.TeamLeaderboard(ctx, "2x2", "")
 	if err != nil {
 		t.Fatalf("TeamLeaderboard: %v", err)
 	}

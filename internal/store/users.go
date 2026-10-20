@@ -117,7 +117,7 @@ func (s *Store) GetUserByLogin(ctx context.Context, login string) (models.User, 
 	return u, err
 }
 
-// PlayerHistory — участия игрока (1×1 по user_id, 2×2 по составу members) с флагом победы (B6).
+// PlayerHistory — участия игрока (1×1 по user_id, составы - по members) с флагом победы.
 func (s *Store) PlayerHistory(ctx context.Context, userID string) ([]models.PlayerHistoryItem, error) {
 	const q = `
 		SELECT t.id, t.title, t.mode, t.status, t.starts_at, p.name, p.total_points,
@@ -125,7 +125,7 @@ func (s *Store) PlayerHistory(ctx context.Context, userID string) ([]models.Play
 		       COALESCE(
 		           (SELECT h.delta FROM mmr_history h WHERE h.tournament_id = t.id AND h.user_id = $1 AND h.mode = '1x1'),
 		           (SELECT th.delta FROM team_mmr_history th JOIN team_mmr tm ON tm.team_key = th.team_key
-		             WHERE th.tournament_id = t.id AND (tm.member_a = $1 OR tm.member_b = $1) LIMIT 1)
+		             WHERE th.tournament_id = t.id AND $1 IN (tm.member_a, tm.member_b, tm.member_c) LIMIT 1)
 		       ) AS mmr_delta
 		FROM participants p
 		JOIN tournaments t ON t.id = p.tournament_id

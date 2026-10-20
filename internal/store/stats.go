@@ -2,9 +2,9 @@ package store
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"math"
-	"strings"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/ur-league/backend/internal/models"
@@ -250,24 +250,30 @@ func (s *Store) Player1x1Place(ctx context.Context, userID string) (int, error) 
 	return 0, nil
 }
 
-// ================== 2×2 (команды) ==================
+// ================== составы 2×2 и 3×3 (команды) ==================
 
-// TeamsForUser — список команд игрока (краткие карточки с MMR и W/L), лучшие сверху.
+// teamMembersJSON - состав команды tm массивом JSON в порядке ключа: двое у 2×2, трое у 3×3.
+const teamMembersJSON = `(SELECT COALESCE(json_agg(json_build_object('userId', u.id, 'login', u.login,
+		'displayName', u.display_name, 'avatarUrl', u.avatar_url)
+		ORDER BY array_position(ARRAY[tm.member_a, tm.member_b, tm.member_c], u.id)), '[]'::json)
+	FROM users u WHERE u.id IN (tm.member_a, tm.member_b, tm.member_c))`
+
+// opponentNamesSQL - логины игроков команды-соперника tmo через « & »: так она подписана в ленте и разбивках.
+const opponentNamesSQL = `COALESCE((SELECT string_agg(u.login, ' & '
+		ORDER BY array_position(ARRAY[tmo.member_a, tmo.member_b, tmo.member_c], u.id))
+	FROM users u WHERE u.id IN (tmo.member_a, tmo.member_b, tmo.member_c)), '')`
+
+// TeamsForUser — список команд игрока обоих форматов (краткие карточки с MMR и W/L), лучшие сверху.
 func (s *Store) TeamsForUser(ctx context.Context, userID string) ([]models.TeamSummary, error) {
-	const q = `
-		SELECT tm.team_key, tm.name, tm.mmr,
-		       ua.id, ua.login, ua.display_name, ua.avatar_url,
-		       ub.id, ub.login, ub.display_name, ub.avatar_url,
+	q := `
+		SELECT tm.team_key, tm.name, tm.mode, tm.mmr, ` + teamMembersJSON + ` AS members,
 		       COALESCE(SUM(t.games) FILTER (WHERE h.delta > 0), 0)::int AS wins,
 		       COALESCE(SUM(t.games) FILTER (WHERE h.delta < 0), 0)::int AS losses
 		FROM team_mmr tm
-		JOIN users ua ON ua.id = tm.member_a
-		JOIN users ub ON ub.id = tm.member_b
 		LEFT JOIN team_mmr_history h ON h.team_key = tm.team_key
 		LEFT JOIN tournaments t ON t.id = h.tournament_id AND t.status = 'finished'
-		WHERE tm.member_a = $1 OR tm.member_b = $1
-		GROUP BY tm.team_key, tm.name, tm.mmr, ua.id, ua.login, ua.display_name, ua.avatar_url,
-		         ub.id, ub.login, ub.display_name, ub.avatar_url
+		WHERE $1 IN (tm.member_a, tm.member_b, tm.member_c)
+		GROUP BY tm.team_key
 		ORDER BY tm.mmr DESC`
 	rows, err := s.Pool.Query(ctx, q, userID)
 	if err != nil {
@@ -277,15 +283,14 @@ func (s *Store) TeamsForUser(ctx context.Context, userID string) ([]models.TeamS
 	out := []models.TeamSummary{}
 	for rows.Next() {
 		var ts models.TeamSummary
-		var a, b models.TeamMember
-		if err := rows.Scan(&ts.TeamKey, &ts.Name, &ts.Mmr,
-			&a.UserID, &a.Login, &a.DisplayName, &a.AvatarURL,
-			&b.UserID, &b.Login, &b.DisplayName, &b.AvatarURL,
-			&ts.Wins, &ts.Losses); err != nil {
+		var members []byte
+		if err := rows.Scan(&ts.TeamKey, &ts.Name, &ts.Mode, &ts.Mmr, &members, &ts.Wins, &ts.Losses); err != nil {
+			return nil, err
+		}
+		if err := json.Unmarshal(members, &ts.Members); err != nil {
 			return nil, err
 		}
 		ts.Games = ts.Wins + ts.Losses
-		ts.Members = []models.TeamMember{a, b}
 		out = append(out, ts)
 	}
 	if err := rows.Err(); err != nil {
@@ -299,34 +304,28 @@ func (s *Store) TeamsForUser(ctx context.Context, userID string) ([]models.TeamS
 	return out, nil
 }
 
-// TeamMembers возвращает состав команды и её текущий MMR; ok=false, если команды нет.
-func (s *Store) TeamMembers(ctx context.Context, teamKey string) ([]models.TeamMember, int, string, bool, error) {
-	var a, b models.TeamMember
-	var mmr int
-	var name string
-	err := s.Pool.QueryRow(ctx, `
-		SELECT tm.mmr, tm.name, ua.id, ua.login, ua.display_name, ua.avatar_url,
-		       ub.id, ub.login, ub.display_name, ub.avatar_url
-		FROM team_mmr tm
-		JOIN users ua ON ua.id = tm.member_a
-		JOIN users ub ON ub.id = tm.member_b
-		WHERE tm.team_key = $1`, teamKey).Scan(&mmr, &name,
-		&a.UserID, &a.Login, &a.DisplayName, &a.AvatarURL,
-		&b.UserID, &b.Login, &b.DisplayName, &b.AvatarURL)
-	if err != nil {
-		return nil, 0, "", false, nil
+// TeamMembers возвращает состав команды, её текущий MMR, название и формат; ok=false, если команды нет.
+func (s *Store) TeamMembers(ctx context.Context, teamKey string) (members []models.TeamMember, mmr int, name, mode string, ok bool, err error) {
+	var raw []byte
+	if s.Pool.QueryRow(ctx, `SELECT tm.mmr, tm.name, tm.mode, `+teamMembersJSON+` FROM team_mmr tm WHERE tm.team_key = $1`,
+		teamKey).Scan(&mmr, &name, &mode, &raw) != nil {
+		return nil, 0, "", "", false, nil
 	}
-	return []models.TeamMember{a, b}, mmr, name, true, nil
+	if err := json.Unmarshal(raw, &members); err != nil {
+		return nil, 0, "", "", false, err
+	}
+	return members, mmr, name, mode, true, nil
 }
 
-// TeamPlace - место команды в таблице 2×2 текущего сезона среди сыгравших в нём; 0 - в этом сезоне
-// не играла. Остальные команды держат стартовый MMR и в таблицу сезона не входят.
+// TeamPlace - место команды в таблице её формата (2×2 или 3×3) текущего сезона среди сыгравших в нём;
+// 0 - в этом сезоне не играла. Остальные команды держат стартовый MMR и в таблицу сезона не входят.
 func (s *Store) TeamPlace(ctx context.Context, teamKey string) (int, error) {
 	var place int
 	err := s.Pool.QueryRow(ctx, `
 		WITH played AS (
 			SELECT tm.team_key, tm.mmr FROM team_mmr tm
-			WHERE EXISTS (SELECT 1 FROM team_mmr_history h
+			WHERE tm.mode = (SELECT mode FROM team_mmr WHERE team_key = $1)
+			  AND EXISTS (SELECT 1 FROM team_mmr_history h
 			              WHERE h.team_key = tm.team_key AND COALESCE(h.season_key, '') = $2)
 		)
 		SELECT 1 + (SELECT COUNT(*) FROM played p WHERE p.mmr > me.mmr) FROM played me WHERE me.team_key = $1`,
@@ -342,7 +341,7 @@ func (s *Store) TeamTimeline(ctx context.Context, teamKey string) ([]models.MmrP
 	const q = `
 		SELECT h.tournament_id, t.title, h.created_at, h.delta, h.mmr_after, t.rating_multiplier, t.games, h.season_key,
 		       COALESCE(opp.team_key, '') AS opp_key,
-		       COALESCE(ua.login, '') AS opp_a, COALESCE(ub.login, '') AS opp_b,
+		       ` + opponentNamesSQL + ` AS opp_name,
 		       ` + matchMapsLabel + ` AS map
 		FROM team_mmr_history h
 		JOIN tournaments t ON t.id = h.tournament_id
@@ -351,8 +350,6 @@ func (s *Store) TeamTimeline(ctx context.Context, teamKey string) ([]models.MmrP
 		    WHERE h2.tournament_id = t.id AND h2.team_key <> $1 LIMIT 1
 		) opp ON true
 		LEFT JOIN team_mmr tmo ON tmo.team_key = opp.team_key
-		LEFT JOIN users ua ON ua.id = tmo.member_a
-		LEFT JOIN users ub ON ub.id = tmo.member_b
 		WHERE h.team_key = $1
 		ORDER BY h.created_at ASC, t.created_at ASC`
 	rows, err := s.Pool.Query(ctx, q, teamKey)
@@ -363,12 +360,12 @@ func (s *Store) TeamTimeline(ctx context.Context, teamKey string) ([]models.MmrP
 	out := []models.MmrPoint{}
 	for rows.Next() {
 		var p models.MmrPoint
-		var oppA, oppB string
+		var opp string
 		if err := rows.Scan(&p.TournamentID, &p.Title, &p.Date, &p.Delta, &p.Mmr, &p.Mult, &p.Games, &p.Season,
-			&p.OpponentKey, &oppA, &oppB, &p.Map); err != nil {
+			&p.OpponentKey, &opp, &p.Map); err != nil {
 			return nil, err
 		}
-		p.Opponent = joinTeamName(oppA, oppB)
+		p.Opponent = teamNameOrDash(opp)
 		p.Win = p.Delta > 0
 		out = append(out, p)
 	}
@@ -396,7 +393,7 @@ func (s *Store) TeamMaps(ctx context.Context, teamKey string) ([]models.MapStat,
 func (s *Store) TeamOpponents(ctx context.Context, teamKey string) ([]models.OpponentStat, error) {
 	const q = `
 		SELECT COALESCE(opp.team_key, '') AS opp_key,
-		       COALESCE(ua.login, '') AS opp_a, COALESCE(ub.login, '') AS opp_b,
+		       ` + opponentNamesSQL + ` AS opp_name,
 		       COALESCE(SUM(t.games) FILTER (WHERE h.delta > 0), 0)::int AS wins,
 		       COALESCE(SUM(t.games) FILTER (WHERE h.delta < 0), 0)::int AS losses,
 		       COALESCE(SUM(t.games), 0)::int AS games
@@ -407,10 +404,8 @@ func (s *Store) TeamOpponents(ctx context.Context, teamKey string) ([]models.Opp
 		    WHERE h2.tournament_id = t.id AND h2.team_key <> $1 LIMIT 1
 		) opp ON true
 		LEFT JOIN team_mmr tmo ON tmo.team_key = opp.team_key
-		LEFT JOIN users ua ON ua.id = tmo.member_a
-		LEFT JOIN users ub ON ub.id = tmo.member_b
 		WHERE h.team_key = $1
-		GROUP BY opp_key, opp_a, opp_b
+		GROUP BY opp.team_key, tmo.team_key
 		ORDER BY games DESC`
 	rows, err := s.Pool.Query(ctx, q, teamKey)
 	if err != nil {
@@ -420,11 +415,11 @@ func (s *Store) TeamOpponents(ctx context.Context, teamKey string) ([]models.Opp
 	out := []models.OpponentStat{}
 	for rows.Next() {
 		var o models.OpponentStat
-		var oppA, oppB string
-		if err := rows.Scan(&o.TeamKey, &oppA, &oppB, &o.Wins, &o.Losses, &o.Games); err != nil {
+		var opp string
+		if err := rows.Scan(&o.TeamKey, &opp, &o.Wins, &o.Losses, &o.Games); err != nil {
 			return nil, err
 		}
-		o.Name = joinTeamName(oppA, oppB)
+		o.Name = teamNameOrDash(opp)
 		out = append(out, o)
 	}
 	return out, rows.Err()
@@ -469,7 +464,7 @@ func (s *Store) TeamMapsBySeason(ctx context.Context, teamKey string) (map[strin
 func (s *Store) TeamOpponentsBySeason(ctx context.Context, teamKey string) (map[string][]models.OpponentStat, error) {
 	const q = `
 		SELECT COALESCE(h.season_key, '') AS season, COALESCE(opp.team_key, '') AS opp_key,
-		       COALESCE(ua.login, '') AS opp_a, COALESCE(ub.login, '') AS opp_b,
+		       ` + opponentNamesSQL + ` AS opp_name,
 		       COALESCE(SUM(t.games) FILTER (WHERE h.delta > 0), 0)::int AS wins,
 		       COALESCE(SUM(t.games) FILTER (WHERE h.delta < 0), 0)::int AS losses,
 		       COALESCE(SUM(t.games), 0)::int AS games
@@ -480,10 +475,8 @@ func (s *Store) TeamOpponentsBySeason(ctx context.Context, teamKey string) (map[
 		    WHERE h2.tournament_id = t.id AND h2.team_key <> $1 LIMIT 1
 		) opp ON true
 		LEFT JOIN team_mmr tmo ON tmo.team_key = opp.team_key
-		LEFT JOIN users ua ON ua.id = tmo.member_a
-		LEFT JOIN users ub ON ub.id = tmo.member_b
 		WHERE h.team_key = $1
-		GROUP BY season, opp_key, opp_a, opp_b
+		GROUP BY season, opp.team_key, tmo.team_key
 		ORDER BY season, games DESC`
 	rows, err := s.Pool.Query(ctx, q, teamKey)
 	if err != nil {
@@ -492,12 +485,12 @@ func (s *Store) TeamOpponentsBySeason(ctx context.Context, teamKey string) (map[
 	defer rows.Close()
 	out := map[string][]models.OpponentStat{}
 	for rows.Next() {
-		var season, oppA, oppB string
+		var season, opp string
 		var o models.OpponentStat
-		if err := rows.Scan(&season, &o.TeamKey, &oppA, &oppB, &o.Wins, &o.Losses, &o.Games); err != nil {
+		if err := rows.Scan(&season, &o.TeamKey, &opp, &o.Wins, &o.Losses, &o.Games); err != nil {
 			return nil, err
 		}
-		o.Name = joinTeamName(oppA, oppB)
+		o.Name = teamNameOrDash(opp)
 		out[season] = append(out[season], o)
 	}
 	return out, rows.Err()
@@ -544,19 +537,12 @@ func (s *Store) scanMapStats(ctx context.Context, q, arg string) ([]models.MapSt
 	return out, rows.Err()
 }
 
-// joinTeamName собирает отображаемое имя команды из логинов состава.
-func joinTeamName(a, b string) string {
-	parts := []string{}
-	if a != "" {
-		parts = append(parts, a)
-	}
-	if b != "" {
-		parts = append(parts, b)
-	}
-	if len(parts) == 0 {
+// teamNameOrDash - имя команды-соперника; прочерк, если состав не нашёлся.
+func teamNameOrDash(name string) string {
+	if name == "" {
 		return "—"
 	}
-	return strings.Join(parts, " & ")
+	return name
 }
 
 // PlayerStatsBundle собирает расширенную статистику 1×1 игрока: ленту, сводку, разбивку по картам и
@@ -611,9 +597,9 @@ func seasonAnalytics(maps []models.MapStat, opps []models.OpponentStat, knocks m
 	return models.SeasonAnalytics{Maps: maps, Opponents: opps, Knocks: knocks}
 }
 
-// TeamProfile собирает полную статистику команды 2×2. ok=false — команды нет.
+// TeamProfile собирает полную статистику команды (2×2 или 3×3). ok=false — команды нет.
 func (s *Store) TeamProfile(ctx context.Context, teamKey string) (models.TeamProfile, bool, error) {
-	members, mmr, name, ok, err := s.TeamMembers(ctx, teamKey)
+	members, mmr, name, mode, ok, err := s.TeamMembers(ctx, teamKey)
 	if err != nil || !ok {
 		return models.TeamProfile{}, ok, err
 	}
@@ -653,6 +639,7 @@ func (s *Store) TeamProfile(ctx context.Context, teamKey string) (models.TeamPro
 	return models.TeamProfile{
 		TeamKey:   teamKey,
 		Name:      name,
+		Mode:      mode,
 		Members:   members,
 		Stats:     stats,
 		Timeline:  timeline,

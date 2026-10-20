@@ -122,12 +122,18 @@ func (s *Server) handleGetPlayer(w http.ResponseWriter, r *http.Request) {
 		if h.Win {
 			wins++
 		}
-		if h.Mode == "2x2" {
+		switch h.Mode {
+		case "2x2":
 			stats.DuoPlayed++
 			if h.Win {
 				stats.DuoWins++
 			}
-		} else {
+		case "3x3":
+			stats.TrioPlayed++
+			if h.Win {
+				stats.TrioWins++
+			}
+		default:
 			stats.SoloPlayed++
 			if h.Win {
 				stats.SoloWins++
@@ -153,8 +159,9 @@ func (s *Server) handleGetPlayer(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	mmrSolo, _ := s.Store.GetUserMmr(r.Context(), u.ID, "1x1")
-	// 2×2 — рейтинг у команд; для профиля показываем лучший MMR среди команд игрока.
-	mmrDuo, _ := s.Store.BestTeamMmr(r.Context(), u.ID)
+	// У составов рейтинг у команд; для профиля - лучший MMR среди команд игрока в каждом формате.
+	mmrDuo, _ := s.Store.BestTeamMmr(r.Context(), u.ID, "2x2")
+	mmrTrio, _ := s.Store.BestTeamMmr(r.Context(), u.ID, "3x3")
 	// Расширенная статистика 1×1 (по истории MMR) + аналитика + команды игрока.
 	mmr1x1, timeline, analytics, _ := s.Store.PlayerStatsBundle(r.Context(), u.ID)
 	teams, _ := s.Store.TeamsForUser(r.Context(), u.ID)
@@ -166,6 +173,7 @@ func (s *Server) handleGetPlayer(w http.ResponseWriter, r *http.Request) {
 		User:        u,
 		MmrSolo:     mmrSolo,
 		MmrDuo:      mmrDuo,
+		MmrTrio:     mmrTrio,
 		Points:      points,
 		Wins:        wins,
 		Tournaments: tournaments,
