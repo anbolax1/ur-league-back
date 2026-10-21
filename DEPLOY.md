@@ -1,6 +1,6 @@
 # Деплой бэкенда (обновление)
 
-Прод: `brouhub.ru/api` → Go API лиги на VPS `155.212.133.147`, порт `8090`, под пользователем
+Прод: `zolotoyarena.pro/api` → Go API лиги на VPS `155.212.133.147`, порт `8090`, под пользователем
 `admin2` (systemd --user сервис `ur-back`). Postgres — системный, локально на сервере, база `ur_league`.
 
 > Сервер под лигу ещё не настроен: первый раз — шаги из `deploy/DEPLOY.md` в корне `UR_League`.
@@ -38,7 +38,7 @@ ssh admin2@$VPS '
 
 ```bash
 # health
-curl -s https://brouhub.ru/api/health        # {"ok":true,...}
+curl -s https://zolotoyarena.pro/api/health        # {"ok":true,...}
 
 # что миграции накатились (смотрим лог сервиса; sudo не нужен)
 ssh admin2@$VPS 'journalctl --user -u ur-back -n 20 --no-pager | grep -iE "goose|migrat|version"'
@@ -81,7 +81,7 @@ ssh admin2@$VPS 'systemctl --user status ur-back --no-pager'      # состоя
 ssh admin2@$VPS 'journalctl --user -u ur-back -n 50 --no-pager'   # последние логи
 ssh admin2@$VPS 'systemctl --user restart ur-back'                # перезапуск
 ```
-- 502 на `brouhub.ru/api` → бэк упал, смотри логи (часто — БД недоступна или паника в миграции).
+- 502 на `zolotoyarena.pro/api` → бэк упал, смотри логи (часто — БД недоступна или паника в миграции).
 - Сервис не стартует после перезагрузки сервера → проверь linger: `loginctl show-user admin2 | grep Linger` (должно `Linger=yes`).
 
 ## Если нет SSH-доступа как admin2 (с этой машины)

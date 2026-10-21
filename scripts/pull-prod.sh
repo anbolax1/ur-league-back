@@ -4,12 +4,12 @@
 #
 #   ./scripts/pull-prod.sh [--media]
 #
-# PROD_HOST - пользователь и сервер (по умолчанию admin2@brouhub.ru), PROD_SSH_KEY - путь
+# PROD_HOST - пользователь и сервер (по умолчанию admin2@zolotoyarena.pro), PROD_SSH_KEY - путь
 # к ключу, если вход не ключом по умолчанию. LOCAL_DB, DB_CONTAINER, MEDIA_DIR - куда класть.
 set -euo pipefail
 
 cd "$(dirname "$0")/.."
-PROD_HOST="${PROD_HOST:-admin2@brouhub.ru}"
+PROD_HOST="${PROD_HOST:-admin2@zolotoyarena.pro}"
 LOCAL_DB="${LOCAL_DB:-ur_league}"
 DB_CONTAINER="${DB_CONTAINER:-ur_db}"
 MEDIA_DIR="${MEDIA_DIR:-./media}"
