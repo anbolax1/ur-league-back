@@ -34,6 +34,7 @@ type Server struct {
 	loginIPLimiter   *limiter
 	loginUserLimiter *limiter
 	registerLimiter  *limiter
+	queueLimiter     *limiter
 }
 
 func New(cfg config.Config, st *store.Store, hub *ws.Hub) *Server {
@@ -45,9 +46,10 @@ func New(cfg config.Config, st *store.Store, hub *ws.Hub) *Server {
 		Hub:              hub,
 		Media:            media.NewProcessor(cfg.MediaDir, cfg.YtDlpPath, cfg.FfmpegPath, cfg.FfprobePath),
 		dummyHash:        dummy,
-		loginIPLimiter:   newLimiter(15, 5*time.Minute), // грубый предохранитель против долбёжки с одного IP
-		loginUserLimiter: newLimiter(8, 15*time.Minute), // против перебора пароля к конкретному логину
-		registerLimiter:  newLimiter(6, time.Hour),      // против массовой регистрации с одного IP
+		loginIPLimiter:   newLimiter(15, 5*time.Minute),           // грубый предохранитель против долбёжки с одного IP
+		loginUserLimiter: newLimiter(8, 15*time.Minute),           // против перебора пароля к конкретному логину
+		registerLimiter:  newLimiter(6, time.Hour),                // против массовой регистрации с одного IP
+		queueLimiter:     newLimiter(queueSelfLimit, time.Minute), // запись, выход и подтверждение одного игрока
 	}
 }
 
@@ -97,6 +99,11 @@ func (s *Server) Router() http.Handler {
 		r.Get("/news", s.handleListNews)
 		r.Get("/news/{id}", s.handleGetNews)
 
+		// --- Очередь выступлений: чтение открыто всем ---
+		r.Get("/queue", s.handleQueue)
+		r.Get("/queue/sessions", s.handleListQueueSessions)
+		r.Get("/queue/sessions/{id}", s.handleQueueSession)
+
 		// --- Authenticated user ---
 		r.Group(func(r chi.Router) {
 			r.Use(s.requireAuth)
@@ -110,6 +117,11 @@ func (s *Server) Router() http.Handler {
 			r.Delete("/me/avatar", s.handleClearAvatar)
 			r.Get("/me/profile-changes", s.handleMyProfileChanges)
 			r.Delete("/me/profile-changes/{id}", s.handleCancelProfileChange)
+			// Очередь выступлений: запись, выход и подтверждение готовности - только за себя.
+			r.Get("/queue/me", s.handleQueueMyCalls)
+			r.Post("/queue/sessions/{id}/join", s.handleQueueJoin)
+			r.Post("/queue/sessions/{id}/leave", s.handleQueueLeave)
+			r.Post("/queue/sessions/{id}/confirm", s.handleQueueConfirm)
 			r.Get("/me/tokens", s.handleMyTokens)
 			r.Post("/me/reset", s.handleResetRating)
 			r.Post("/registrations", s.handleRegister)
@@ -127,13 +139,31 @@ func (s *Server) Router() http.Handler {
 			r.Post("/users/{id}/tokens/priority", s.handleActivatePriority)
 			r.Delete("/users/{id}/tokens/priority", s.handleCancelPriority)
 			r.Post("/tournaments/{id}/double", s.handleMatchDouble)
+
+			// Очередь выступлений (организатор и модератор): сессии, вызовы, порядок, матчи, журнал.
+			r.Post("/queue/sessions", s.handleCreateQueueSession)
+			r.Patch("/queue/sessions/{id}", s.handleUpdateQueueSession)
+			r.Post("/queue/sessions/{id}/mode", s.handleQueueMode)
+			r.Post("/queue/sessions/{id}/finish", s.handleFinishQueueSession)
+			r.Post("/queue/sessions/{id}/call", s.handleQueueCall)
+			r.Post("/queue/sessions/{id}/entries", s.handleQueueAdd)
+			r.Post("/queue/sessions/{id}/entries/{entryId}/confirm", s.handleQueueConfirmEntry)
+			r.Post("/queue/sessions/{id}/entries/{entryId}/skip", s.handleQueueSkip)
+			r.Post("/queue/sessions/{id}/entries/{entryId}/return", s.handleQueueReturn)
+			r.Post("/queue/sessions/{id}/entries/{entryId}/move", s.handleQueueMove)
+			r.Delete("/queue/sessions/{id}/entries/{entryId}", s.handleQueueRemove)
+			r.Post("/queue/sessions/{id}/match/start", s.handleQueueMatchStart)
+			r.Post("/queue/sessions/{id}/match/finish", s.handleQueueMatchFinish)
+			r.Post("/queue/sessions/{id}/match/cancel", s.handleQueueMatchCancel)
+			r.Get("/queue/sessions/{id}/events", s.handleQueueEvents)
+			// Список игроков нужен модератору, чтобы добавлять в очередь вручную.
+			r.Get("/match-players", s.handleListMatchPlayers)
 		})
 
 		// --- Superadmin only (организатор) ---
 		r.Group(func(r chi.Router) {
 			r.Use(s.requireRole(models.RoleSuperadmin))
 			// Матч: создание, раунды с заходами, зачёт, ручные очки, журнал, завершение.
-			r.Get("/match-players", s.handleListMatchPlayers)
 			r.Post("/players/placeholder", s.handleCreatePlaceholder)
 			r.Post("/matches", s.handleCreateMatch)
 			r.Post("/tournaments/{id}/first", s.handleFirstSide)
