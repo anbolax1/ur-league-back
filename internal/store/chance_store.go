@@ -449,7 +449,7 @@ func (s *Store) MatchChance(ctx context.Context, st models.MatchState, focus str
 	t := st.Tournament
 	parts, users, ok := chanceSides(t)
 	if !ok {
-		return nil, nil
+		return s.teamChance(ctx, t)
 	}
 	snap, err := s.chances(ctx, false)
 	if err != nil {
@@ -484,6 +484,20 @@ func (s *Store) MatchChance(ctx context.Context, st models.MatchState, focus str
 	}
 	out.Now = liveChance(st, parts, setup, focus, starts)
 	return out, nil
+}
+
+// teamChance - шансы составов 2×2 и 3×3: заходов команд модель не знает, поэтому шанс по MMR сторон и не
+// меняется по ходу матча. Нужен, чтобы шкала шанса в оверлее работала и у составов. Сыгранный матч - итог.
+func (s *Store) teamChance(ctx context.Context, t models.Tournament) (*models.MatchChance, error) {
+	if !IsTeamMode(t.Mode) || len(t.Participants) != 2 {
+		return nil, nil
+	}
+	mu, err := s.Matchup(ctx, t.ID)
+	if err != nil || len(mu.Sides) != 2 || mu.Sides[0].WinChance == 0 {
+		return nil, err
+	}
+	pre := models.Chance{A: float64(mu.Sides[0].WinChance) / 100, B: float64(mu.Sides[1].WinChance) / 100}
+	return &models.MatchChance{Pre: pre, Now: pre}, nil
 }
 
 // raidStart - начало захода стороны в раунде.

@@ -176,6 +176,12 @@ func TestTokensIntegration(t *testing.T) {
 	if err := st.SetDoubleToken(ctx, m4, f.ID, true, ""); !errors.Is(err, store.ErrSideHasToken) {
 		t.Errorf("второй жетон на ту же сторону: %v, want ErrSideHasToken", err)
 	}
+	// У составов шанс для оверлея - по MMR сторон: шкала шанса работает и в 2×2.
+	if ms, err := st.GetMatchState(ctx, m4); err != nil {
+		t.Fatalf("GetMatchState 2×2: %v", err)
+	} else if mc, err := st.MatchChance(ctx, ms, ""); err != nil || mc == nil || mc.Now.A+mc.Now.B < 0.99 {
+		t.Errorf("шанс составов: %+v %v", mc, err)
+	}
 	finish(m4, pt)
 	teamDelta := func(x, y models.User) int {
 		t.Helper()
