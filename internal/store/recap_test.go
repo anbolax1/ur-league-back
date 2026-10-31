@@ -98,6 +98,10 @@ func TestBuildRecap(t *testing.T) {
 	if bk := r.BestKnock; bk == nil || *bk != (models.RecapBestKnock{Match: 1, Player: gamma, Knocks: 2, Round: 2, Map: "miramar"}) {
 		t.Errorf("рекорд захода: %+v", r.BestKnock)
 	}
+	// В матче m2 у GAMMA два захода: 0 и 2 килла, у ALPHA - 1 и 0.
+	if bm := r.BestMatchKnock; bm == nil || *bm != (models.RecapBestMatchKnock{Match: 1, Player: gamma, Knocks: 2}) {
+		t.Errorf("рекорд матча по киллам: %+v", r.BestMatchKnock)
+	}
 	if k := r.Knockers; len(k) != 2 || k[0] != (models.RecapKnocker{Player: gamma, Knocks: 2, Heats: 2}) ||
 		k[1] != (models.RecapKnocker{Player: alphaI, Knocks: 1, Heats: 2}) {
 		t.Errorf("киллы по игрокам: %+v", r.Knockers)

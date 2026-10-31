@@ -131,6 +131,9 @@ func (s *Store) GetMatchState(ctx context.Context, tournamentID string) (models.
 	if st.Patches, err = s.MatchPatches(ctx, tournamentID); err != nil {
 		return st, err
 	}
+	if st.Doubles, st.DoubleWallet, err = s.MatchDoubles(ctx, t.Participants, tournamentID); err != nil {
+		return st, err
+	}
 
 	// Ручные очки с киллами, карты и места заходов - по раундам.
 	manual := map[int]map[string]int{}

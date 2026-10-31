@@ -75,6 +75,7 @@ func (s *Server) Router() http.Handler {
 		r.Get("/seasons", s.handleListSeasons)
 		r.Get("/seasons/{key}/recap", s.handleSeasonRecap)
 		r.Get("/players/{login}", s.handleGetPlayer)
+		r.Get("/hidden-players", s.handleHiddenPlayers)
 		r.Get("/patches", s.handlePatchCatalog)
 		r.Get("/belt", s.handleBelt)
 		r.Get("/teams/{teamKey}", s.handleGetTeam)
@@ -86,6 +87,7 @@ func (s *Server) Router() http.Handler {
 		r.Get("/matches/current", s.handleCurrentMatch)
 		r.Get("/tournaments/{id}/match", s.handleGetMatch)
 		r.Get("/tournaments/{id}/matchup", s.handleMatchup)
+		r.Get("/tournaments/{id}/chance", s.handleMatchChance)
 		r.Get("/overlay/state", s.handleGetOverlayState)
 		r.Get("/overlay/layout", s.handleGetOverlayLayout)
 		r.Get("/overlay/preset/{key}", s.handleGetOverlayPreset) // раскладка для ссылки /overlay/<slug> в OBS
@@ -103,8 +105,28 @@ func (s *Server) Router() http.Handler {
 			r.Get("/me/tags", s.handleMyTags)
 			r.Put("/me/tags/{id}", s.handleSetMyTag)
 			r.Get("/me/registrations", s.handleMyRegistrations)
+			r.Post("/me/name", s.handleChangeName)
+			r.Post("/me/avatar", s.handleChangeAvatar)
+			r.Delete("/me/avatar", s.handleClearAvatar)
+			r.Get("/me/profile-changes", s.handleMyProfileChanges)
+			r.Delete("/me/profile-changes/{id}", s.handleCancelProfileChange)
+			r.Get("/me/tokens", s.handleMyTokens)
+			r.Post("/me/reset", s.handleResetRating)
 			r.Post("/registrations", s.handleRegister)
 			r.Post("/highlights", s.handleCreateHighlight)
+		})
+
+		// --- Модератор и организатор: проверка фото и ников игроков ---
+		r.Group(func(r chi.Router) {
+			r.Use(s.requireRole(models.RoleModerator))
+			r.Get("/profile-changes", s.handlePendingProfileChanges)
+			r.Post("/profile-changes/{id}/decide", s.handleDecideProfileChange)
+			// Жетоны игроков: выдача, «Без очереди», ×2 на матч.
+			r.Get("/users/{id}/moderation", s.handlePlayerModeration)
+			r.Post("/users/{id}/tokens", s.handleGrantTokens)
+			r.Post("/users/{id}/tokens/priority", s.handleActivatePriority)
+			r.Delete("/users/{id}/tokens/priority", s.handleCancelPriority)
+			r.Post("/tournaments/{id}/double", s.handleMatchDouble)
 		})
 
 		// --- Superadmin only (организатор) ---
@@ -136,11 +158,13 @@ func (s *Server) Router() http.Handler {
 			r.Post("/tournaments/{id}/knocks", s.handleMatchKnock)
 			r.Post("/tournaments/{id}/legendary", s.handleMatchLegendary)
 			r.Post("/tournaments/{id}/undo", s.handleMatchUndo)
+			r.Post("/tournaments/{id}/duel", s.handleMatchDuel)
 			r.Post("/round-bonus-tasks/{id}/mark", s.handleMarkTask)
 			r.Post("/round-bonus-tasks/{id}/reroll", s.handleRerollTask)
 
 			r.Get("/users/overview", s.handleListUsersOverview)
 			r.Patch("/users/{id}/role", s.handleSetUserRole)
+			r.Patch("/users/{id}/hidden", s.handleSetUserHidden)
 			r.Post("/users/{id}/claim-link", s.handleCreateClaimLink)
 			r.Get("/registrations/pool", s.handleListPool)
 			r.Get("/registrations/pool/page", s.handleListPoolPage)

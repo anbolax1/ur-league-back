@@ -238,7 +238,7 @@ func (s *Store) RefreshMmrCaches(ctx context.Context) error {
 // ровно две стороны). Идемпотентно: сначала откатывает прежние начисления этого турнира, затем
 // начисляет заново (выдерживает повторный finished и смену победителя). Без победителя или если
 // сторон не ровно две — MMR не двигается. 1×1 — рейтинг игроков (user_mmr); 2×2 и 3×3 — рейтинг
-// КОМАНД (team_mmr по составу). Как считается жетон ×2 - см. eloWinMagnitude.
+// КОМАНД (team_mmr по составу). Как считается ×2 матча - см. eloWinMagnitude, жетон ×2 игрока - tokenMult.
 func (s *Store) ApplyTournamentMmr(ctx context.Context, tournamentID string) error {
 	t, err := s.GetTournament(ctx, tournamentID)
 	if err != nil {
@@ -274,14 +274,18 @@ func (s *Store) ApplyTournamentMmr(ctx context.Context, tournamentID string) err
 	if err != nil {
 		return err
 	}
-	if IsTeamMode(t.Mode) {
-		return s.applyTeamMatch(ctx, tournamentID, winner, loser, mult, t.Games, rule)
+	doubled, err := s.doubledUsers(ctx, tournamentID)
+	if err != nil {
+		return err
 	}
-	return s.applyUserMatch(ctx, tournamentID, winner, loser, mult, t.Games, rule)
+	if IsTeamMode(t.Mode) {
+		return s.applyTeamMatch(ctx, tournamentID, winner, loser, mult, t.Games, rule, doubled)
+	}
+	return s.applyUserMatch(ctx, tournamentID, winner, loser, mult, t.Games, rule, doubled)
 }
 
 // applyUserMatch — начисление 1×1 (рейтинг игроков).
-func (s *Store) applyUserMatch(ctx context.Context, tournamentID string, winner, loser models.Participant, mult, games int, rule seasonRule) error {
+func (s *Store) applyUserMatch(ctx context.Context, tournamentID string, winner, loser models.Participant, mult, games int, rule seasonRule, doubled map[string]bool) error {
 	if winner.UserID == nil || loser.UserID == nil || *winner.UserID == "" || *loser.UserID == "" {
 		return nil
 	}
@@ -295,7 +299,7 @@ func (s *Store) applyUserMatch(ctx context.Context, tournamentID string, winner,
 		return err
 	}
 	mag := eloWinMagnitude(rw, rl, mult, games, rule.K)
-	winDelta, loseDelta := mag, -mag
+	winDelta, loseDelta := mag*tokenMult(doubled, wu), -mag*tokenMult(doubled, lu)
 	// Матч перенесён из внешнего источника: его изменения MMR берутся как есть.
 	var pinW, pinL *int
 	if err := s.Pool.QueryRow(ctx, `
@@ -329,7 +333,7 @@ func (s *Store) insertUserMmrHistory(ctx context.Context, tournamentID, userID, 
 }
 
 // applyTeamMatch — начисление составов 2×2 и 3×3 (рейтинг КОМАНД). Неполные составы не рейтингуются.
-func (s *Store) applyTeamMatch(ctx context.Context, tournamentID string, winner, loser models.Participant, mult, games int, rule seasonRule) error {
+func (s *Store) applyTeamMatch(ctx context.Context, tournamentID string, winner, loser models.Participant, mult, games int, rule seasonRule, doubled map[string]bool) error {
 	wk, wm, ok1 := teamKeyFromParticipant(winner)
 	lk, lm, ok2 := teamKeyFromParticipant(loser)
 	if !ok1 || !ok2 || wk == lk {
@@ -350,10 +354,11 @@ func (s *Store) applyTeamMatch(ctx context.Context, tournamentID string, winner,
 		return err
 	}
 	mag := eloWinMagnitude(rw, rl, mult, games, rule.K)
-	if err := s.insertTeamMmrHistory(ctx, tournamentID, wk, mag, rw, rule.Key); err != nil {
+	winDelta, loseDelta := mag*tokenMult(doubled, wm...), -mag*tokenMult(doubled, lm...)
+	if err := s.insertTeamMmrHistory(ctx, tournamentID, wk, winDelta, rw, rule.Key); err != nil {
 		return err
 	}
-	if err := s.insertTeamMmrHistory(ctx, tournamentID, lk, -mag, rl, rule.Key); err != nil {
+	if err := s.insertTeamMmrHistory(ctx, tournamentID, lk, loseDelta, rl, rule.Key); err != nil {
 		return err
 	}
 	if err := s.recomputeTeamMmr(ctx, wk); err != nil {
@@ -510,7 +515,7 @@ func (s *Store) applyCorrection(ctx context.Context, userID, seasonID string, de
 }
 
 // RecomputeAllMmr полностью пересчитывает MMR (игроков и команд) с нуля по ВСЕМ завершённым
-// турнирам и сверкам в хронологическом порядке: каждый матч - по правилам своего сезона.
+// турнирам, сверкам и сбросам жетоном в хронологическом порядке: каждый матч - по правилам своего сезона.
 func (s *Store) RecomputeAllMmr(ctx context.Context) error {
 	for _, q := range []string{`TRUNCATE mmr_history`, `TRUNCATE team_mmr_history`, `DELETE FROM user_mmr`, `DELETE FROM team_mmr`} {
 		if _, err := s.Pool.Exec(ctx, q); err != nil {
@@ -519,25 +524,28 @@ func (s *Store) RecomputeAllMmr(ctx context.Context) error {
 	}
 	// Сверка в один момент с матчем идёт раньше него: она про рейтинг до этого матча.
 	rows, err := s.Pool.Query(ctx, `
-		SELECT id, '', '', 0, COALESCE(starts_at, created_at) AS at, 1 AS ord, created_at
+		SELECT 'match', id, '', '', 0, COALESCE(starts_at, created_at) AS at, 1 AS ord, created_at
 		FROM tournaments WHERE status = 'finished'
 		UNION ALL
-		SELECT '', user_id, COALESCE(season_id, ''), delta, at, 0, at FROM mmr_corrections
+		SELECT 'correction', '', user_id, COALESCE(season_id, ''), delta, at, 0, at FROM mmr_corrections
+		UNION ALL
+		SELECT 'reset', '', user_id, season_id, 0, created_at, 2, created_at FROM token_ledger
+		WHERE kind = 'reset' AND action = 'use' AND season_id IS NOT NULL
 		ORDER BY at, ord, created_at`)
 	if err != nil {
 		return err
 	}
 	type event struct {
-		tournamentID, userID, seasonID string
-		delta                          int
-		at                             time.Time
+		kind, tournamentID, userID, seasonID string
+		delta                                int
+		at                                   time.Time
 	}
 	var events []event
 	for rows.Next() {
 		var e event
 		var ord int
 		var created time.Time
-		if err := rows.Scan(&e.tournamentID, &e.userID, &e.seasonID, &e.delta, &e.at, &ord, &created); err != nil {
+		if err := rows.Scan(&e.kind, &e.tournamentID, &e.userID, &e.seasonID, &e.delta, &e.at, &ord, &created); err != nil {
 			rows.Close()
 			return err
 		}
@@ -549,9 +557,12 @@ func (s *Store) RecomputeAllMmr(ctx context.Context) error {
 	}
 	for _, e := range events {
 		var err error
-		if e.tournamentID != "" {
+		switch e.kind {
+		case "match":
 			err = s.ApplyTournamentMmr(ctx, e.tournamentID)
-		} else {
+		case "reset":
+			err = s.applyReset(ctx, e.userID, e.seasonID, e.at)
+		default:
 			err = s.applyCorrection(ctx, e.userID, e.seasonID, e.delta, e.at)
 		}
 		if err != nil {

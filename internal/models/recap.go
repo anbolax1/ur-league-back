@@ -5,28 +5,29 @@ import "time"
 // SeasonRecap - итоги сезона для страницы /season/{номер}: всё посчитано на сервере, страница только рисует.
 // Игроки и матчи ссылаются друг на друга индексами в Players и Matches.
 type SeasonRecap struct {
-	Season    Season          `json:"season"`
-	Live      bool            `json:"live"` // сезон ещё идёт: на странице лидер, а не чемпион
-	Summary   RecapSummary    `json:"summary"`
-	Players   []RecapPlayer   `json:"players"`  // по местам в таблице
-	Matches   []RecapMatch    `json:"matches"`  // по времени
-	Days      []RecapDay      `json:"days"`     // каждый день от первого матча до последнего
-	Leaders   []RecapLeader   `json:"leaders"`  // кто был первым на конец дня, отрезками
-	Decisive  int             `json:"decisive"` // матч, после которого первым стал итоговый лидер; -1 - лидер не менялся
-	Maps      []RecapMap      `json:"maps"`
-	Knockers  []RecapKnocker  `json:"knockers"`
-	BestKnock *RecapBestKnock `json:"bestKnock,omitempty"` // лучший заход сезона по киллам
-	Places    [16]int         `json:"places"`              // заходов на каждом месте, с первого
-	Placers   []RecapPlacer   `json:"placers"`             // игроки с записанными местами
-	Comebacks []RecapComeback `json:"comebacks"`
-	Tasks     RecapTasks      `json:"tasks"`
-	Favorites [2]int          `json:"favorites"` // побед фаворита по MMR и матчей, где MMR сторон различался
-	Upsets    []RecapUpset    `json:"upsets"`
-	Swings    []int           `json:"swings"` // матчи с самым большим изменением MMR
-	Rivals    []RecapRival    `json:"rivals"`
-	Weekday   [7]int          `json:"weekday"` // матчей по дням недели, с понедельника
-	Hours     [24]int         `json:"hours"`   // час начала по Москве - только у матчей с точным временем
-	Upcoming  []RecapUpcoming `json:"upcoming"`
+	Season         Season               `json:"season"`
+	Live           bool                 `json:"live"` // сезон ещё идёт: на странице лидер, а не чемпион
+	Summary        RecapSummary         `json:"summary"`
+	Players        []RecapPlayer        `json:"players"`  // по местам в таблице
+	Matches        []RecapMatch         `json:"matches"`  // по времени
+	Days           []RecapDay           `json:"days"`     // каждый день от первого матча до последнего
+	Leaders        []RecapLeader        `json:"leaders"`  // кто был первым на конец дня, отрезками
+	Decisive       int                  `json:"decisive"` // матч, после которого первым стал итоговый лидер; -1 - лидер не менялся
+	Maps           []RecapMap           `json:"maps"`
+	Knockers       []RecapKnocker       `json:"knockers"`
+	BestKnock      *RecapBestKnock      `json:"bestKnock,omitempty"`      // лучший заход сезона по киллам
+	BestMatchKnock *RecapBestMatchKnock `json:"bestMatchKnock,omitempty"` // больше всего киллов за один матч
+	Places         [16]int              `json:"places"`                   // заходов на каждом месте, с первого
+	Placers        []RecapPlacer        `json:"placers"`                  // игроки с записанными местами
+	Comebacks      []RecapComeback      `json:"comebacks"`
+	Tasks          RecapTasks           `json:"tasks"`
+	Favorites      [2]int               `json:"favorites"` // побед фаворита по MMR и матчей, где MMR сторон различался
+	Upsets         []RecapUpset         `json:"upsets"`
+	Swings         []int                `json:"swings"` // матчи с самым большим изменением MMR
+	Rivals         []RecapRival         `json:"rivals"`
+	Weekday        [7]int               `json:"weekday"` // матчей по дням недели, с понедельника
+	Hours          [24]int              `json:"hours"`   // час начала по Москве - только у матчей с точным временем
+	Upcoming       []RecapUpcoming      `json:"upcoming"`
 }
 
 type RecapSummary struct {
@@ -125,6 +126,13 @@ type RecapBestKnock struct {
 	Knocks int    `json:"knocks"`
 	Round  int    `json:"round"`
 	Map    string `json:"map"` // код карты захода
+}
+
+// RecapBestMatchKnock - рекорд сезона по киллам стороны за все её заходы одного матча.
+type RecapBestMatchKnock struct {
+	Match  int `json:"match"`
+	Player int `json:"player"`
+	Knocks int `json:"knocks"`
 }
 
 // RecapPlacer - места игрока в заходах сезона: сколько записано, среднее, чикены и топ-5.

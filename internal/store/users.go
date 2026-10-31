@@ -51,7 +51,7 @@ func (s *Store) CreateUser(ctx context.Context, login, displayName, passwordHash
 func (s *Store) GetUserAuthByLogin(ctx context.Context, login string) (id string, role models.Role, passwordHash string, err error) {
 	var r string
 	err = s.Pool.QueryRow(ctx,
-		`SELECT id, role, password_hash FROM users WHERE lower(login) = lower($1)`, login).
+		`SELECT id, role, password_hash FROM users WHERE lower(login) = lower($1) AND hidden_at IS NULL`, login).
 		Scan(&id, &r, &passwordHash)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return "", "", "", ErrNotFound
@@ -84,7 +84,7 @@ func (s *Store) GetUserSession(ctx context.Context, id string) (models.User, tim
 	var u models.User
 	var role string
 	var validAfter time.Time
-	err := s.Pool.QueryRow(ctx, `SELECT `+userCols+`, tokens_valid_after FROM users WHERE id = $1`, id).
+	err := s.Pool.QueryRow(ctx, `SELECT `+userCols+`, tokens_valid_after FROM users WHERE id = $1 AND hidden_at IS NULL`, id).
 		Scan(&u.ID, &u.Login, &u.DisplayName, &u.AvatarURL, &u.Email, &role, &u.GameID, &u.GameNick, &u.CreatedAt, &validAfter)
 	u.Role = models.Role(role)
 	return u, validAfter, err
@@ -258,7 +258,7 @@ func (s *Store) ListUsersOverview(ctx context.Context, limit, offset int, q, sor
 	}
 	query := `
 		SELECT u.id, u.login, u.display_name, u.avatar_url, u.email, u.role, u.game_id, u.game_nick, u.created_at,
-		       (u.password_hash LIKE '!%') AS is_placeholder,
+		       (u.password_hash LIKE '!%') AS is_placeholder, (u.hidden_at IS NOT NULL),
 		       COALESCE(s.tournaments, 0), COALESCE(s.wins, 0), COALESCE(s.points, 0), COALESCE(s.participations, 0),
 		       COUNT(*) OVER() AS total
 		FROM users u
@@ -292,7 +292,7 @@ func (s *Store) ListUsersOverview(ctx context.Context, limit, offset int, q, sor
 		var o models.UserOverview
 		var role string
 		if err := rows.Scan(&o.User.ID, &o.User.Login, &o.User.DisplayName, &o.User.AvatarURL,
-			&o.User.Email, &role, &o.User.GameID, &o.User.GameNick, &o.User.CreatedAt, &o.IsPlaceholder,
+			&o.User.Email, &role, &o.User.GameID, &o.User.GameNick, &o.User.CreatedAt, &o.IsPlaceholder, &o.User.Hidden,
 			&o.Tournaments, &o.Wins, &o.Points, &o.Participations, &total); err != nil {
 			return nil, 0, err
 		}
@@ -318,4 +318,56 @@ func (s *Store) UpdateGameProfile(ctx context.Context, userID, gameID, gameNick 
 		return models.User{}, ErrGameIDTaken
 	}
 	return u, err
+}
+
+// SetUserHidden убирает игрока с сайта или возвращает: страница, рейтинг, вход и выбор в матч закрыты,
+// а сыгранные матчи остаются с его ником. Скрытому игроку сразу гасятся все сессии.
+func (s *Store) SetUserHidden(ctx context.Context, id string, hidden bool) error {
+	ct, err := s.Pool.Exec(ctx, `
+		UPDATE users SET hidden_at = CASE WHEN $2 THEN COALESCE(hidden_at, now()) END,
+		       tokens_valid_after = CASE WHEN $2 THEN now() ELSE tokens_valid_after END, updated_at = now()
+		WHERE id = $1`, id, hidden)
+	if err != nil {
+		return err
+	}
+	if ct.RowsAffected() == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
+// HiddenLogins - логины удалённых игроков: по ним сайт не делает ссылок на их страницы.
+func (s *Store) HiddenLogins(ctx context.Context) ([]string, error) {
+	rows, err := s.Pool.Query(ctx, `SELECT login FROM users WHERE hidden_at IS NOT NULL ORDER BY login`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []string{}
+	for rows.Next() {
+		var l string
+		if err := rows.Scan(&l); err != nil {
+			return nil, err
+		}
+		out = append(out, l)
+	}
+	return out, rows.Err()
+}
+
+// IsUserHidden сообщает, что игрок удалён с сайта.
+func (s *Store) IsUserHidden(ctx context.Context, id string) (bool, error) {
+	var hidden bool
+	err := s.Pool.QueryRow(ctx, `SELECT hidden_at IS NOT NULL FROM users WHERE id = $1`, id).Scan(&hidden)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return false, ErrNotFound
+	}
+	return hidden, err
+}
+
+// TeamHasHiddenMember - в составе команды есть удалённый игрок: её страница и место в рейтинге закрыты.
+func (s *Store) TeamHasHiddenMember(ctx context.Context, teamKey string) (bool, error) {
+	var has bool
+	err := s.Pool.QueryRow(ctx, `
+		SELECT EXISTS (SELECT 1 FROM users WHERE hidden_at IS NOT NULL AND id = ANY(string_to_array($1, '|')))`, teamKey).Scan(&has)
+	return has, err
 }

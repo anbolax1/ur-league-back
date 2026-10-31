@@ -11,6 +11,7 @@ type Role string
 
 const (
 	RoleUser       Role = "user"       // обычный зарегистрированный пользователь
+	RoleModerator  Role = "moderator"  // проверяет фото и ники игроков, ведёт жетоны
 	RoleSuperadmin Role = "superadmin" // организатор: полный доступ ко всему
 )
 
@@ -22,6 +23,7 @@ const DefaultRole = RoleUser
 // чтобы новые роли (например moderator=50) можно было вставлять между существующими.
 var roleLevels = map[Role]int{
 	RoleUser:       10,
+	RoleModerator:  50,
 	RoleSuperadmin: 100,
 }
 
@@ -55,6 +57,7 @@ type User struct {
 	GameNick    string    `json:"gameNick"` // ник в игре
 	CreatedAt   time.Time `json:"createdAt"`
 	Tags        []UserTag `json:"tags,omitempty"`
+	Hidden      bool      `json:"hidden,omitempty"` // удалён организатором; заполнено только в списке игроков кабинета
 }
 
 // UserTag - тег игрока; Visible - организатор показывает его на сайте, HiddenByUser - игрок
@@ -88,15 +91,24 @@ type TagHolder struct {
 // Season — период рейтинга. Ровно один active одновременно; завершённый имеет ended_at.
 // MMR считается внутри сезона: все начинают со StartMmr, шаг Эло задаёт KFactor.
 type Season struct {
-	ID        string     `json:"id"`
-	Name      string     `json:"name"`
-	Status    string     `json:"status"` // active | finished
-	StartedAt time.Time  `json:"startedAt"`
-	EndedAt   *time.Time `json:"endedAt,omitempty"`
-	CreatedAt time.Time  `json:"createdAt"`
-	KFactor   int        `json:"kFactor"`
-	StartMmr  int        `json:"startMmr"`
-	Number    *int       `json:"number,omitempty"` // для адреса страницы итогов /season/{номер}
+	ID        string       `json:"id"`
+	Name      string       `json:"name"`
+	Status    string       `json:"status"` // active | finished
+	StartedAt time.Time    `json:"startedAt"`
+	EndedAt   *time.Time   `json:"endedAt,omitempty"`
+	CreatedAt time.Time    `json:"createdAt"`
+	KFactor   int          `json:"kFactor"`
+	StartMmr  int          `json:"startMmr"`
+	Number    *int         `json:"number,omitempty"` // для адреса страницы итогов /season/{номер}
+	Prizes    SeasonPrizes `json:"prizes"`
+}
+
+// SeasonPrizes - призовой фонд сезона: Places - рубли за места по порядку, Pool - весь фонд
+// (0 - сумма мест), Note - подпись под призами, например про способ выплаты.
+type SeasonPrizes struct {
+	Pool   int    `json:"pool"`
+	Places []int  `json:"places"`
+	Note   string `json:"note"`
 }
 
 // MapInfo - карта из справочника: её отмечают у захода, по ней выдаются задания на карту.
@@ -154,8 +166,50 @@ type MatchState struct {
 	Manual       []RoundScore          `json:"manual"` // вместе с очками за киллы
 	Knocks       []RoundKnocks         `json:"knocks"`
 	Log          []MatchLogEntry       `json:"log"`
-	Patches      []MatchPatch          `json:"patches"`         // нашивки, полученные в этом матче
-	Focus        string                `json:"focus,omitempty"` // сторона, чей заход идёт: её задания и счёт показывает оверлей
+	Patches      []MatchPatch          `json:"patches"`          // нашивки, полученные в этом матче
+	Focus        string                `json:"focus,omitempty"`  // сторона, чей заход идёт: её задания и счёт показывает оверлей
+	Chance       *MatchChance          `json:"chance,omitempty"` // шансы на победу; у составов не считаются
+	Doubles      []DoubleToken         `json:"doubles"`          // жетоны ×2 игроков на этот матч
+	DoubleWallet map[string]int        `json:"doubleWallet"`     // сколько жетонов ×2 у каждого игрока сторон
+}
+
+// Chance - шансы сторон A и B на победу, доли от 1, в сумме 1; Draw - шанс равного счёта после всех
+// заходов: тогда матч решает дуэль до первого килла, её доля уже в шансах сторон.
+type Chance struct {
+	A    float64 `json:"a"`
+	Draw float64 `json:"draw"`
+	B    float64 `json:"b"`
+}
+
+// MatchChance - шансы матча перед первым заходом и сейчас.
+type MatchChance struct {
+	Pre Chance `json:"pre"`
+	Now Chance `json:"now"`
+}
+
+// ChancePoint - шанс после действия в пульте или закрытия захода: точка графика матча.
+type ChancePoint struct {
+	At     time.Time `json:"at"`
+	Kind   string    `json:"kind"` // start | knock | task | points | legendary | raid (заход закрылся) | duel | end | now
+	Round  int       `json:"round"`
+	Side   int       `json:"side"` // 0 - A, 1 - B, -1 - без стороны
+	Text   string    `json:"text"`
+	Delta  int       `json:"delta,omitempty"`
+	Score  [2]int    `json:"score"`
+	Chance Chance    `json:"chance"`
+}
+
+// ChanceTrail - как менялся шанс по ходу матча.
+type ChanceTrail struct {
+	Points []ChancePoint `json:"points"`
+	Live   bool          `json:"live"` // матч идёт: график ещё растёт
+}
+
+// ChanceDot - точка графика шанса в оверлее: шанс A и ничьей, раунд.
+type ChanceDot struct {
+	A     float64 `json:"a"`
+	Draw  float64 `json:"draw"`
+	Round int     `json:"round"`
 }
 
 // Matchup - противостояние сторон для страницы матча: рейтинг, что стоит на кону, личные встречи.
@@ -163,6 +217,7 @@ type Matchup struct {
 	Season     *SeasonRef    `json:"season,omitempty"`
 	Sides      []MatchupSide `json:"sides"` // по порядку: A, B
 	HeadToHead HeadToHead    `json:"headToHead"`
+	DrawChance int           `json:"drawChance,omitempty"` // шанс ничьей перед матчем, проценты
 }
 
 // SeasonRef - сезон, в зачёт которого идёт матч.
@@ -183,9 +238,10 @@ type MatchupSide struct {
 	Wins          int          `json:"wins"`
 	Losses        int          `json:"losses"`
 	IsNew         bool         `json:"isNew"`               // в сезоне ещё не играл
-	WinChance     int          `json:"winChance,omitempty"` // шанс победы по MMR, проценты
+	WinChance     int          `json:"winChance,omitempty"` // шанс на победу перед матчем, проценты
 	WinGain       int          `json:"winGain,omitempty"`   // MMR за победу
 	LossDrop      int          `json:"lossDrop,omitempty"`  // MMR за поражение
+	Double        bool         `json:"double,omitempty"`    // жетон ×2: и победа, и поражение вдвое
 }
 
 // HeadToHead - другие сыгранные матчи тех же сторон друг против друга. Матч ×2 прошлых сезонов
@@ -214,7 +270,8 @@ type MatchPlayer struct {
 	Losses        int    `json:"losses"`
 	IsNew         bool   `json:"isNew"` // в текущем сезоне ещё не играл
 	IsPlaceholder bool   `json:"isPlaceholder"`
-	PrevGames     int    `json:"prevGames"` // матчей в прошлых сезонах: при равном MMR сторона A - у кого меньше
+	PrevGames     int    `json:"prevGames"`          // матчей в прошлых сезонах: при равном MMR сторона A - у кого меньше
+	Priority      bool   `json:"priority,omitempty"` // сегодня играет без очереди
 }
 
 type Tournament struct {
@@ -277,6 +334,21 @@ type Round struct {
 	Status       string `json:"status"`
 }
 
+// ProfileChange - заявка игрока на смену ника или фото. Value: новый ник либо адрес фото на сайте.
+type ProfileChange struct {
+	ID              string     `json:"id"`
+	UserID          string     `json:"userId"`
+	Kind            string     `json:"kind"` // name | avatar
+	Value           string     `json:"value"`
+	Status          string     `json:"status"` // pending | approved | rejected
+	Reason          string     `json:"reason"` // почему отклонено
+	CreatedAt       time.Time  `json:"createdAt"`
+	DecidedAt       *time.Time `json:"decidedAt,omitempty"`
+	UserLogin       string     `json:"userLogin,omitempty"`
+	UserDisplayName string     `json:"userDisplayName,omitempty"`
+	UserAvatarURL   string     `json:"userAvatarUrl,omitempty"`
+}
+
 type Registration struct {
 	ID              string     `json:"id"`
 	TournamentID    *string    `json:"tournamentId,omitempty"` // куда поставлен; nil — пока в пуле
@@ -285,12 +357,19 @@ type Registration struct {
 	GameNick        string     `json:"gameNick"`
 	Status          string     `json:"status"`
 	Note            string     `json:"note"`
+	Rank            string     `json:"rank"`
+	Kd              *float64   `json:"kd,omitempty"`
+	Matches         *int       `json:"matches,omitempty"`
+	Wins            *int       `json:"wins,omitempty"`
+	Kills           *int       `json:"kills,omitempty"`
+	PlayTime        string     `json:"playTime"`
 	CreatedAt       time.Time  `json:"createdAt"`
 	DecidedAt       *time.Time `json:"decidedAt,omitempty"`
 	UserLogin       string     `json:"userLogin,omitempty"`
 	UserDisplayName string     `json:"userDisplayName,omitempty"`
 	UserAvatarURL   string     `json:"userAvatarUrl,omitempty"`
 	TournamentTitle string     `json:"tournamentTitle,omitempty"`
+	Priority        bool       `json:"priority,omitempty"` // сегодня без очереди: в пуле выше остальных
 }
 
 type LeaderboardRow struct {
@@ -345,6 +424,7 @@ type MmrPoint struct {
 	Games        int        `json:"games"`                // сколько матчей засчитывает (для побед и поражений)
 	Season       string     `json:"season"`               // id сезона; пусто - матч вне сезона
 	Correction   bool       `json:"correction,omitempty"` // не матч, а сверка рейтинга с официальными цифрами
+	Reset        bool       `json:"reset,omitempty"`      // не матч, а сброс рейтинга жетоном
 }
 
 // MmrStats — сводная статистика по исходам (игрок 1×1 или команда 2×2). wins/losses/games
@@ -477,6 +557,61 @@ type PlayerProfile struct {
 	Analytics map[string]SeasonAnalytics `json:"analytics1x1"` // по картам и соперникам; ключ - сезон, пусто - вне сезонов
 	Teams     []TeamSummary              `json:"teams"`        // команды 2×2 и 3×3, где состоит игрок
 	Patches   map[string]PatchSeason     `json:"patches1x1"`   // нашивки по сезонам; ключ - сезон
+	Tokens    TokenWallet                `json:"tokens"`
+}
+
+// TokenWallet - жетоны игрока и когда их можно тратить.
+type TokenWallet struct {
+	Double        int        `json:"double"`
+	Priority      int        `json:"priority"`
+	Reset         int        `json:"reset"`
+	PriorityUntil *time.Time `json:"priorityUntil,omitempty"` // жетон «Без очереди» действует до конца игрового дня
+	PriorityNext  *time.Time `json:"priorityNext,omitempty"`  // раньше этого новый «Без очереди» не активировать
+	LastReset     *time.Time `json:"lastReset,omitempty"`     // когда игрок в последний раз сбросил рейтинг
+	ResetUsed     bool       `json:"resetUsed,omitempty"`     // в текущем сезоне рейтинг уже сброшен
+}
+
+// TokenEntry - строка журнала жетонов: выдача (+N) или трата (-1).
+type TokenEntry struct {
+	ID           string    `json:"id"`
+	Kind         string    `json:"kind"` // double | priority | reset
+	Delta        int       `json:"delta"`
+	Note         string    `json:"note,omitempty"`
+	TournamentID *string   `json:"tournamentId,omitempty"`
+	Match        string    `json:"match,omitempty"` // название матча, на который потрачен жетон ×2
+	By           string    `json:"by,omitempty"`    // кто выдал или активировал
+	CreatedAt    time.Time `json:"createdAt"`
+}
+
+// DoubleToken - жетон ×2, активированный игроком на этот матч.
+type DoubleToken struct {
+	ParticipantID string `json:"participantId"`
+	UserID        string `json:"userId"`
+}
+
+// PendingMatch - матч игрока, который ещё не начался: на него можно активировать жетон ×2.
+type PendingMatch struct {
+	TournamentID string     `json:"tournamentId"`
+	Title        string     `json:"title"`
+	Mode         string     `json:"mode"`
+	StartsAt     *time.Time `json:"startsAt,omitempty"`
+	Active       bool       `json:"active"`            // жетон этого игрока уже на матче
+	Blocked      string     `json:"blocked,omitempty"` // почему не активировать: например, у напарника уже стоит
+}
+
+// PlayerModeration - что модератор видит на странице игрока: журнал жетонов и матчи,
+// на которые можно поставить жетон ×2.
+type PlayerModeration struct {
+	Ledger  []TokenEntry   `json:"ledger"`
+	Matches []PendingMatch `json:"matches"`
+}
+
+// MyTokens - свои жетоны с MMR и причиной, по которой рейтинг сейчас не сбросить.
+type MyTokens struct {
+	Tokens       TokenWallet `json:"tokens"`
+	ResetBlocked string      `json:"resetBlocked,omitempty"`
+	Mmr          int         `json:"mmr"` // MMR 1×1 в текущем сезоне
+	StartMmr     int         `json:"startMmr"`
 }
 
 // SeasonAnalytics — разбивка матчей одного сезона по картам и по соперникам и киллы игрока.
@@ -730,6 +865,12 @@ type LiveState struct {
 
 	// Матч идёт за пояс лиги: табло отмечает носителя, а после матча - итог.
 	Belt *LiveBelt `json:"belt,omitempty"`
+
+	// Шансы на победу сторон (по порядку в standings) и ничьей, и как они менялись в этом матче.
+	Chance      *Chance     `json:"chance,omitempty"`
+	ChanceTrail []ChanceDot `json:"chanceTrail,omitempty"`
+	// Счёт после всех заходов равный: стороны играют дуэль до первого килла.
+	Duel bool `json:"duel,omitempty"`
 }
 
 // FramePlayer - игрок стороны в кадре: ник на сайте и ник в игре.
@@ -789,6 +930,8 @@ type WidgetInstance struct {
 	ShowMmr        bool            `json:"showMmr,omitempty"`               // табло: MMR сторон
 	ShowPlace      bool            `json:"showPlace,omitempty"`             // табло: места сторон в таблице сезона
 	ShowBelt       bool            `json:"showBelt,omitempty"`              // табло: значок у носителя пояса лиги
+	ShowChance     bool            `json:"showChance,omitempty"`            // табло: шанс на победу сторон и ничьей
+	ShowChanceBar  bool            `json:"showChanceBar,omitempty"`         // табло: полоса шанса под счётом
 	Anchor         string          `json:"anchor,omitempty"`                // привязка к краю (tl|tc|tr|ml|c|mr|bl|bc|br); "" — свободно
 	Bg             OverlayBg       `json:"bg"`
 	Accent         string          `json:"accent,omitempty"`

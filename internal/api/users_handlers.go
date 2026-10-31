@@ -95,6 +95,10 @@ func (s *Server) handleGetPlayer(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
+	if hidden, _ := s.Store.IsUserHidden(r.Context(), u.ID); hidden {
+		writeError(w, http.StatusNotFound, "игрок не найден")
+		return
+	}
 	u.Tags, _ = s.Store.UserTags(r.Context(), u.ID, true)
 	// Целиком игровой ID видят сам игрок и организатор: по ID игрока находят в игре.
 	if viewer, ok := userFrom(r.Context()); !ok || (viewer.ID != u.ID && !viewer.Role.AtLeast(models.RoleSuperadmin)) {
@@ -169,6 +173,11 @@ func (s *Server) handleGetPlayer(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		patches = map[string]models.PatchSeason{}
 	}
+	wallet, err := s.Store.TokenWallet(r.Context(), u.ID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
 	writeJSON(w, http.StatusOK, models.PlayerProfile{
 		User:        u,
 		MmrSolo:     mmrSolo,
@@ -184,6 +193,7 @@ func (s *Server) handleGetPlayer(w http.ResponseWriter, r *http.Request) {
 		Analytics:   analytics,
 		Teams:       teams,
 		Patches:     patches,
+		Tokens:      wallet,
 	})
 }
 
@@ -194,4 +204,41 @@ func maskGameID(id string) string {
 		return strings.Repeat("•", len(id))
 	}
 	return id[:2] + strings.Repeat("•", len(id)-4) + id[len(id)-2:]
+}
+
+// PATCH /api/users/{id}/hidden {hidden} - убрать игрока с сайта (страница, рейтинг, вход) или вернуть.
+// Матчи остаются в истории с его ником. Организатора скрыть нельзя.
+func (s *Server) handleSetUserHidden(w http.ResponseWriter, r *http.Request) {
+	id := chi.URLParam(r, "id")
+	var body struct {
+		Hidden bool `json:"hidden"`
+	}
+	if err := readJSON(r, &body); err != nil {
+		writeError(w, http.StatusBadRequest, "некорректный JSON")
+		return
+	}
+	target, err := s.Store.GetUser(r.Context(), id)
+	if err != nil {
+		writeError(w, http.StatusNotFound, "пользователь не найден")
+		return
+	}
+	if body.Hidden && target.Role == models.RoleSuperadmin {
+		writeError(w, http.StatusConflict, "организатора скрыть нельзя")
+		return
+	}
+	if err := s.Store.SetUserHidden(r.Context(), id, body.Hidden); err != nil {
+		writeError(w, http.StatusInternalServerError, "не удалось сохранить")
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// GET /api/hidden-players - логины удалённых игроков; по ним сайт не ставит ссылки на их страницы.
+func (s *Server) handleHiddenPlayers(w http.ResponseWriter, r *http.Request) {
+	logins, err := s.Store.HiddenLogins(r.Context())
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, logins)
 }

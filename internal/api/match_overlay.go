@@ -7,6 +7,7 @@ import (
 	"sort"
 
 	"github.com/ur-league/backend/internal/models"
+	"github.com/ur-league/backend/internal/store"
 )
 
 // publishMatchOverlay считает для оверлея счёт и задания, а раскладку и сторону, чей заход идёт, берёт
@@ -65,12 +66,37 @@ func (s *Server) matchLiveState(ctx context.Context, st models.MatchState, store
 	ls := buildMatchLiveState(st, stored)
 	s.addStandingRatings(ctx, st, &ls)
 	s.addFramePlayers(ctx, st, &ls)
+	s.addLiveChance(ctx, st, &ls)
 	if belt, err := s.Store.MatchBelt(ctx, st); err == nil {
 		ls.Belt = belt
 	} else {
 		log.Printf("пояс для оверлея: %v", err)
 	}
 	return ls
+}
+
+// addLiveChance - шансы сторон сейчас и как они менялись: для табло и графика шанса в оверлее.
+func (s *Server) addLiveChance(ctx context.Context, st models.MatchState, ls *models.LiveState) {
+	focus := ""
+	if ls.CurrentParticipantID != nil {
+		focus = *ls.CurrentParticipantID
+	}
+	mc, err := s.Store.MatchChance(ctx, st, focus)
+	if err != nil {
+		log.Printf("шанс для оверлея: %v", err)
+		return
+	}
+	if mc == nil {
+		return
+	}
+	ls.Chance = &mc.Now
+	trail, err := s.Store.MatchChanceTrail(ctx, st, focus)
+	if err != nil || trail == nil {
+		return
+	}
+	for _, p := range trail.Points {
+		ls.ChanceTrail = append(ls.ChanceTrail, models.ChanceDot{A: p.Chance.A, Draw: p.Chance.Draw, Round: p.Round})
+	}
 }
 
 // addFramePlayers - игроки стороны, чей заход идёт: ник на сайте и ник в игре, в 2×2 - оба.
@@ -206,6 +232,7 @@ func buildMatchLiveState(st models.MatchState, stored models.LiveState) models.L
 		Stage:          st.Stage,
 		ShowStandings:  stored.ShowStandings,
 		Layout:         stored.Layout,
+		Duel:           store.MatchDuel(st),
 	}
 	if stored.TournamentID != nil && *stored.TournamentID == t.ID {
 		ls.PatchFlashes = stored.PatchFlashes

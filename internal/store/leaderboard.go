@@ -40,7 +40,7 @@ func (s *Store) Leaderboard(ctx context.Context, mode, seasonID string) ([]model
 		   AND ($1 = '' OR t.season_id = $1)
 		JOIN users u ON u.id = p.user_id
 		LEFT JOIN user_mmr um ON um.user_id = u.id AND um.mode = '1x1'
-		WHERE p.kind = 'player'
+		WHERE p.kind = 'player' AND u.hidden_at IS NULL
 		GROUP BY u.id, u.login, u.display_name, u.avatar_url, um.mmr
 		ORDER BY mmr DESC, wins DESC`
 
@@ -80,6 +80,7 @@ func (s *Store) TeamLeaderboard(ctx context.Context, mode, seasonID string) ([]m
 		JOIN tournaments t ON t.id = h.tournament_id AND t.status = 'finished'
 		   AND ($1 = '' OR t.season_id = $1)
 		WHERE tm.mode = $3
+		  AND NOT EXISTS (SELECT 1 FROM users hu WHERE hu.hidden_at IS NOT NULL AND hu.id = ANY(string_to_array(tm.team_key, '|')))
 		GROUP BY tm.team_key
 		ORDER BY mmr DESC, wins DESC`
 

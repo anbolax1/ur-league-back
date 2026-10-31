@@ -12,6 +12,10 @@ import (
 // handleGetTeam — публичная страница команды 2×2: состав + статистика + аналитика + динамика MMR.
 func (s *Server) handleGetTeam(w http.ResponseWriter, r *http.Request) {
 	key := chi.URLParam(r, "teamKey")
+	if hidden, _ := s.Store.TeamHasHiddenMember(r.Context(), key); hidden {
+		writeError(w, http.StatusNotFound, "команда не найдена")
+		return
+	}
 	tp, ok, err := s.Store.TeamProfile(r.Context(), key)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())

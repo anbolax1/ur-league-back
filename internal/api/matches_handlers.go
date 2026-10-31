@@ -1,8 +1,10 @@
 package api
 
 import (
+	"context"
 	"errors"
 	"fmt"
+	"log"
 	"net/http"
 	"strings"
 	"time"
@@ -29,10 +31,12 @@ func (s *Server) handleCurrentMatch(w http.ResponseWriter, r *http.Request) {
 	out := map[string]any{"current": nil, "last": nil}
 	if id, err := s.Store.CurrentMatchID(r.Context()); err == nil && id != "" {
 		if st, err := s.Store.GetMatchState(r.Context(), id); err == nil {
+			s.withChance(r.Context(), &st)
 			out["current"] = st
 		}
 	} else if id, err := s.Store.LastFinishedMatchID(r.Context()); err == nil && id != "" {
 		if st, err := s.Store.GetMatchState(r.Context(), id); err == nil {
+			s.withChance(r.Context(), &st)
 			out["last"] = st
 		}
 	}
@@ -47,7 +51,37 @@ func (s *Server) handleGetMatch(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.withHeatSide(r.Context(), &st)
+	s.withChance(r.Context(), &st)
 	writeJSON(w, http.StatusOK, st)
+}
+
+// GET /api/tournaments/{id}/chance - как менялся шанс по ходу матча: для графика на странице матча.
+func (s *Server) handleMatchChance(w http.ResponseWriter, r *http.Request) {
+	st, err := s.Store.GetMatchState(r.Context(), chi.URLParam(r, "id"))
+	if err != nil {
+		writeError(w, http.StatusNotFound, "матч не найден")
+		return
+	}
+	s.withHeatSide(r.Context(), &st)
+	trail, err := s.Store.MatchChanceTrail(r.Context(), st, st.Focus)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	if trail == nil {
+		trail = &models.ChanceTrail{Points: []models.ChancePoint{}}
+	}
+	writeJSON(w, http.StatusOK, trail)
+}
+
+// withChance дописывает шансы на победу: перед матчем и сейчас.
+func (s *Server) withChance(ctx context.Context, st *models.MatchState) {
+	mc, err := s.Store.MatchChance(ctx, *st, st.Focus)
+	if err != nil {
+		log.Printf("шанс матча: %v", err)
+		return
+	}
+	st.Chance = mc
 }
 
 // GET /api/tournaments/{id}/matchup - стороны для страницы матча: рейтинг, что на кону, личные встречи.
@@ -88,6 +122,7 @@ func (s *Server) writeMatch(w http.ResponseWriter, r *http.Request, tournamentID
 		s.publishMatchState(r.Context(), st)
 	}
 	s.withHeatSide(r.Context(), &st)
+	s.withChance(r.Context(), &st)
 	writeJSON(w, status, st)
 }
 
@@ -150,13 +185,12 @@ func (s *Server) handleCreatePlaceholder(w http.ResponseWriter, r *http.Request)
 // в расписание и всегда идёт три раунда.
 func (s *Server) handleCreateMatch(w http.ResponseWriter, r *http.Request) {
 	var b struct {
-		Mode             string     `json:"mode"`
-		RatingMultiplier int        `json:"ratingMultiplier"`
-		Format           string     `json:"format"`
-		Rounds           int        `json:"rounds"`
-		StartsAt         *time.Time `json:"startsAt"`
-		Prize            string     `json:"prize"`
-		Sides            []struct {
+		Mode     string     `json:"mode"`
+		Format   string     `json:"format"`
+		Rounds   int        `json:"rounds"`
+		StartsAt *time.Time `json:"startsAt"`
+		Prize    string     `json:"prize"`
+		Sides    []struct {
 			UserID  string   `json:"userId"`
 			Members []string `json:"members"`
 			Name    string   `json:"name"`
@@ -179,7 +213,7 @@ func (s *Server) handleCreateMatch(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	in := store.NewMatch{
-		Mode: b.Mode, RatingMultiplier: b.RatingMultiplier, Format: b.Format, Rounds: b.Rounds, StartsAt: b.StartsAt,
+		Mode: b.Mode, Format: b.Format, Rounds: b.Rounds, StartsAt: b.StartsAt,
 		Prize: prize,
 	}
 	for i, sd := range b.Sides {
@@ -263,6 +297,9 @@ func (s *Server) handleNextRound(w http.ResponseWriter, r *http.Request) {
 	if t, err := s.Store.GetTournament(r.Context(), id); err == nil {
 		if parts := sidesBySeed(t); len(parts) > 0 {
 			s.storeHeatSide(r.Context(), id, parts[0].ID)
+			if rd, ok := s.liveRound(r, id); ok {
+				s.recordRaidStart(r.Context(), id, rd.Number, parts[0].ID)
+			}
 		}
 	}
 	s.writeMatch(w, r, id, http.StatusOK)
@@ -463,8 +500,21 @@ func (s *Server) handleMatchFocus(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "сторона не из этого матча")
 		return
 	}
+	prev := s.storedLiveState(r.Context())
 	s.storeHeatSide(r.Context(), id, p.ID)
+	// Сторона в кадре сменилась - начался её заход; повторное нажатие на ту же сторону заход не начинает.
+	if prev.TournamentID == nil || *prev.TournamentID != id || prev.CurrentParticipantID == nil || *prev.CurrentParticipantID != p.ID {
+		if rd, ok := s.liveRound(r, id); ok {
+			s.recordRaidStart(r.Context(), id, rd.Number, p.ID)
+		}
+	}
 	s.writeMatch(w, r, id, http.StatusOK)
+}
+
+func (s *Server) recordRaidStart(ctx context.Context, tournamentID string, round int, participantID string) {
+	if err := s.Store.RecordRaidStart(ctx, tournamentID, round, participantID); err != nil {
+		log.Printf("начало захода: %v", err)
+	}
 }
 
 // startedRound - сыгранный или идущий раунд матча с этим номером; 0 - идущий.

@@ -78,9 +78,13 @@ func (s *Store) loadRecap(ctx context.Context, sn models.Season) (recapInput, er
 	}
 	const seasonMatches = `t.season_id = $1 AND t.status = 'finished' AND t.mode = '1x1'`
 
-	// Матчи и стороны: A - первый посев, B - второй.
+	// Матчи и стороны: A - первый посев, B - второй. Матч ×2 - и общий «Рейтинг ×2» прошлых сезонов, и жетон ×2
+	// хотя бы одного игрока.
 	rows, err := s.Pool.Query(ctx, `
-		SELECT t.id, COALESCE(t.starts_at, t.created_at), t.format = 'show', t.rating_multiplier, t.games,
+		SELECT t.id, COALESCE(t.starts_at, t.created_at), t.format = 'show',
+		       GREATEST(t.rating_multiplier, CASE WHEN EXISTS (
+		           SELECT 1 FROM token_ledger tl WHERE tl.tournament_id = t.id AND tl.kind = 'double') THEN 2 ELSE 1 END),
+		       t.games,
 		       COALESCE(t.winner_participant_id, ''), p.id, COALESCE(p.user_id, ''), p.total_points
 		FROM tournaments t JOIN participants p ON p.tournament_id = t.id
 		WHERE `+seasonMatches+`
@@ -244,7 +248,7 @@ func (s *Store) loadRecap(ctx context.Context, sn models.Season) (recapInput, er
 	}
 
 	rows, err = s.Pool.Query(ctx, `
-		SELECT user_id, COALESCE(tournament_id, ''), created_at, delta, mmr_before
+		SELECT user_id, COALESCE(tournament_id, ''), created_at, delta, mmr_before, reset
 		FROM mmr_history WHERE season_key = $1 AND mode = '1x1'
 		ORDER BY created_at, tournament_id NULLS LAST, id`, sn.ID)
 	if err != nil {
@@ -252,7 +256,7 @@ func (s *Store) loadRecap(ctx context.Context, sn models.Season) (recapInput, er
 	}
 	for rows.Next() {
 		var h recapHist
-		if err := rows.Scan(&h.user, &h.tournament, &h.at, &h.delta, &h.before); err != nil {
+		if err := rows.Scan(&h.user, &h.tournament, &h.at, &h.delta, &h.before, &h.reset); err != nil {
 			rows.Close()
 			return in, err
 		}

@@ -46,7 +46,7 @@ func computeMmrStats(points []models.MmrPoint) models.MmrStats {
 	peak := StartMmr
 	curKind, curLen := "", 0
 	for _, p := range points {
-		if p.Correction {
+		if p.Correction || p.Reset {
 			if p.Mmr > peak {
 				peak = p.Mmr
 			}
@@ -92,11 +92,16 @@ func computeMmrStats(points []models.MmrPoint) models.MmrStats {
 
 // ================== 1×1 (игроки) ==================
 
-// Player1x1Timeline — динамика MMR игрока в 1×1 (ASC по времени): соперник, карты, дельта, исход.
+// Player1x1Timeline - динамика MMR игрока в 1×1 (ASC по времени): соперник, карты, дельта, исход. Множитель
+// матча вместе с жетоном ×2 игрока.
 func (s *Store) Player1x1Timeline(ctx context.Context, userID string) ([]models.MmrPoint, error) {
 	const q = `
-		SELECT COALESCE(h.tournament_id, ''), COALESCE(t.title, 'Сверка рейтинга'), h.created_at, h.delta, h.mmr_after,
-		       COALESCE(t.rating_multiplier, 1), COALESCE(t.games, 1), h.season_key, h.tournament_id IS NULL,
+		SELECT COALESCE(h.tournament_id, ''),
+		       CASE WHEN h.reset THEN 'Сброс рейтинга' ELSE COALESCE(t.title, 'Сверка рейтинга') END,
+		       h.created_at, h.delta, h.mmr_after,
+		       COALESCE(t.rating_multiplier, 1) * CASE WHEN EXISTS (SELECT 1 FROM token_ledger l
+		           WHERE l.tournament_id = t.id AND l.user_id = $1 AND l.kind = 'double') THEN 2 ELSE 1 END,
+		       COALESCE(t.games, 1), h.season_key, h.tournament_id IS NULL AND NOT h.reset, h.reset,
 		       COALESCE(opp.name, '') AS opp_name,
 		       COALESCE(uu.login, '') AS opp_login,
 		       ` + matchMapsLabel + ` AS map
@@ -463,10 +468,10 @@ func (s *Store) scanTimeline(ctx context.Context, q, arg string) ([]models.MmrPo
 	for rows.Next() {
 		var p models.MmrPoint
 		if err := rows.Scan(&p.TournamentID, &p.Title, &p.Date, &p.Delta, &p.Mmr, &p.Mult, &p.Games, &p.Season,
-			&p.Correction, &p.Opponent, &p.OpponentKey, &p.Map); err != nil {
+			&p.Correction, &p.Reset, &p.Opponent, &p.OpponentKey, &p.Map); err != nil {
 			return nil, err
 		}
-		p.Win = p.Delta > 0
+		p.Win = p.Delta > 0 && !p.Reset
 		out = append(out, p)
 	}
 	return out, rows.Err()
