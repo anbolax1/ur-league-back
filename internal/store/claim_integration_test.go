@@ -65,3 +65,54 @@ func TestClaimIntegration(t *testing.T) {
 		t.Errorf("для активированного аккаунта не должно выдаваться ссылки")
 	}
 }
+
+// Сброс пароля: старый вход закрыт, сессии отозваны, по свежей ссылке ставится новый пароль.
+func TestResetPasswordIntegration(t *testing.T) {
+	url := os.Getenv("UR_TEST_DB")
+	if url == "" {
+		t.Skip("UR_TEST_DB не задан")
+	}
+	if err := db.Migrate(url); err != nil {
+		t.Fatalf("миграции: %v", err)
+	}
+	ctx := context.Background()
+	pool, err := db.Connect(ctx, url)
+	if err != nil {
+		t.Fatalf("подключение: %v", err)
+	}
+	defer pool.Close()
+	st := store.New(pool)
+
+	login := fmt.Sprintf("reset_%d", time.Now().UnixNano())
+	u, err := st.CreateUser(ctx, login, login, "$2y$12$fakehashfakehashfakehashfakehashfakehashfa", models.RoleUser)
+	if err != nil {
+		t.Fatalf("CreateUser: %v", err)
+	}
+	if _, ok, _ := st.EnsureClaimToken(ctx, u.ID, "x", false); ok {
+		t.Fatalf("у аккаунта с паролем ссылки быть не должно")
+	}
+	_, before, _ := st.GetUserSession(ctx, u.ID)
+
+	tok, ok, err := st.ResetPassword(ctx, u.ID, "reset-"+login)
+	if err != nil || !ok || tok != "reset-"+login {
+		t.Fatalf("ResetPassword: ok=%v tok=%q err=%v", ok, tok, err)
+	}
+	if _, _, hash, err := st.GetUserAuthByLogin(ctx, login); err != nil || hash != "!reset" {
+		t.Fatalf("после сброса хеш должен быть заглушкой: %q err=%v", hash, err)
+	}
+	_, after, _ := st.GetUserSession(ctx, u.ID)
+	if !after.After(before) {
+		t.Errorf("сессии не отозваны: %v -> %v", before, after)
+	}
+	// Повторный сброс гасит прежнюю ссылку.
+	tok2, _, _ := st.ResetPassword(ctx, u.ID, "reset2-"+login)
+	if _, ok, _ := st.LookupClaimToken(ctx, tok); ok {
+		t.Errorf("прежняя ссылка жива после нового сброса")
+	}
+	if _, ok, err := st.ClaimAccount(ctx, tok2, "$2y$12$newhashnewhashnewhashnewhashnewhashnewhashnewha"); err != nil || !ok {
+		t.Fatalf("активация по ссылке сброса: ok=%v err=%v", ok, err)
+	}
+	if _, ok, _ := st.ResetPassword(ctx, "no-such-user", "t"); ok {
+		t.Errorf("сброс несуществующего аккаунта")
+	}
+}

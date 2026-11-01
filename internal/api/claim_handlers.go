@@ -40,6 +40,32 @@ func (s *Server) handleCreateClaimLink(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]string{"token": token})
 }
 
+// POST /api/users/{id}/reset-password - организатор сбрасывает пароль игрока и получает ссылку, по которой тот
+// задаёт новый. Старый пароль и открытые сессии перестают работать сразу. Свой пароль так не сбросить:
+// организатор остался бы без входа.
+func (s *Server) handleResetPassword(w http.ResponseWriter, r *http.Request) {
+	id := chi.URLParam(r, "id")
+	if me, ok := userFrom(r.Context()); ok && me.ID == id {
+		writeError(w, http.StatusBadRequest, "свой пароль сбросить нельзя - попросите другого организатора")
+		return
+	}
+	tok, err := randomToken()
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "не удалось сгенерировать токен")
+		return
+	}
+	token, ok, err := s.Store.ResetPassword(r.Context(), id, tok)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	if !ok {
+		writeError(w, http.StatusNotFound, "игрок не найден")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]string{"token": token})
+}
+
 // GET /api/claim/{token} — данные для страницы активации (ник аккаунта). Публичный.
 func (s *Server) handleClaimInfo(w http.ResponseWriter, r *http.Request) {
 	u, ok, err := s.Store.LookupClaimToken(r.Context(), chi.URLParam(r, "token"))

@@ -198,6 +198,7 @@ func (s *Server) Router() http.Handler {
 			r.Patch("/users/{id}/role", s.handleSetUserRole)
 			r.Patch("/users/{id}/hidden", s.handleSetUserHidden)
 			r.Post("/users/{id}/claim-link", s.handleCreateClaimLink)
+			r.Post("/users/{id}/reset-password", s.handleResetPassword)
 			r.Get("/registrations/pool", s.handleListPool)
 			r.Get("/registrations/pool/page", s.handleListPoolPage)
 			r.Post("/registrations/{id}/decide", s.handleDecideRegistration)

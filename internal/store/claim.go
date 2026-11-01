@@ -105,3 +105,34 @@ func (s *Store) ClaimAccount(ctx context.Context, token, passwordHash string) (m
 	u, err := s.GetUser(ctx, uid)
 	return u, err == nil, err
 }
+
+// resetPasswordHash - хеш-заглушка сброшенного пароля: старый пароль не подходит, активация по ссылке работает.
+const resetPasswordHash = "!reset"
+
+// ResetPassword закрывает аккаунту вход старым паролем и сессиями и выдаёт свежую ссылку, по которой игрок
+// задаёт новый пароль. ok=false - такого аккаунта нет.
+func (s *Store) ResetPassword(ctx context.Context, userID, newToken string) (string, bool, error) {
+	tx, err := s.Pool.Begin(ctx)
+	if err != nil {
+		return "", false, err
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	tag, err := tx.Exec(ctx,
+		`UPDATE users SET password_hash=$2, tokens_valid_after=now(), updated_at=now() WHERE id=$1`, userID, resetPasswordHash)
+	if err != nil {
+		return "", false, err
+	}
+	if tag.RowsAffected() == 0 {
+		return "", false, nil
+	}
+	if _, err := tx.Exec(ctx, `DELETE FROM account_claim_tokens WHERE user_id=$1`, userID); err != nil {
+		return "", false, err
+	}
+	if _, err := tx.Exec(ctx, `INSERT INTO account_claim_tokens (token, user_id) VALUES ($1,$2)`, newToken, userID); err != nil {
+		return "", false, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return "", false, err
+	}
+	return newToken, true, nil
+}
