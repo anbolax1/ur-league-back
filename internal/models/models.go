@@ -169,6 +169,7 @@ type MatchState struct {
 	Patches      []MatchPatch          `json:"patches"`          // нашивки, полученные в этом матче
 	Focus        string                `json:"focus,omitempty"`  // сторона, чей заход идёт: её задания и счёт показывает оверлей
 	Chance       *MatchChance          `json:"chance,omitempty"` // шансы на победу; у составов не считаются
+	Timer        *LiveTimer            `json:"timer,omitempty"`  // таймер задания на время, пока запущен
 	Doubles      []DoubleToken         `json:"doubles"`          // жетоны ×2 игроков на этот матч
 	DoubleWallet map[string]int        `json:"doubleWallet"`     // сколько жетонов ×2 у каждого игрока сторон
 }
@@ -871,6 +872,15 @@ type LiveState struct {
 	ChanceTrail []ChanceDot `json:"chanceTrail,omitempty"`
 	// Счёт после всех заходов равный: стороны играют дуэль до первого килла.
 	Duel bool `json:"duel,omitempty"`
+
+	// Таймер задания на время: запускает ведущий в пульте, виджет заданий показывает остаток.
+	Timer *LiveTimer `json:"timer,omitempty"`
+}
+
+// LiveTimer - отсчёт задания на время: EndsAt - момент конца в миллисекундах Unix, DurationSec - сколько было задано.
+type LiveTimer struct {
+	DurationSec int   `json:"durationSec"`
+	EndsAt      int64 `json:"endsAt"`
 }
 
 // FramePlayer - игрок стороны в кадре: ник на сайте и ник в игре.
@@ -932,6 +942,7 @@ type WidgetInstance struct {
 	ShowBelt       bool            `json:"showBelt,omitempty"`              // табло: значок у носителя пояса лиги
 	ShowChance     bool            `json:"showChance,omitempty"`            // табло: шанс на победу сторон и ничьей
 	ShowChanceBar  bool            `json:"showChanceBar,omitempty"`         // табло: полоса шанса под счётом
+	ShowTimer      bool            `json:"showTimer,omitempty"`             // задания: таймер задания на время
 	Anchor         string          `json:"anchor,omitempty"`                // привязка к краю (tl|tc|tr|ml|c|mr|bl|bc|br); "" — свободно
 	Bg             OverlayBg       `json:"bg"`
 	Accent         string          `json:"accent,omitempty"`

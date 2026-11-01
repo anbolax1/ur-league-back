@@ -94,3 +94,23 @@ func TestMatchOverlayShowsHeatOfSideInFrame(t *testing.T) {
 		t.Fatalf("киллы захода стороны в кадре: %d, want 2", ls.HeatKills)
 	}
 }
+
+func TestMatchOverlayTimerOnlyInRoundOfSameMatch(t *testing.T) {
+	tid, other, a := "t1", "t2", "pa"
+	timer := &models.LiveTimer{DurationSec: 120, EndsAt: 1_000}
+	st := models.MatchState{
+		Tournament:   models.Tournament{ID: tid, Participants: []models.Participant{{ID: a, Name: "EDEN", Seed: 1}}},
+		Stage:        "round",
+		CurrentRound: 1,
+	}
+	if ls := buildMatchLiveState(st, models.LiveState{TournamentID: &tid, Timer: timer}); ls.Timer != timer {
+		t.Fatalf("таймер идущего раунда: %+v", ls.Timer)
+	}
+	if ls := buildMatchLiveState(st, models.LiveState{TournamentID: &other, Timer: timer}); ls.Timer != nil {
+		t.Fatalf("таймер чужого матча попал в оверлей: %+v", ls.Timer)
+	}
+	st.Stage = "finished"
+	if ls := buildMatchLiveState(st, models.LiveState{TournamentID: &tid, Timer: timer}); ls.Timer != nil {
+		t.Fatalf("таймер после матча остался: %+v", ls.Timer)
+	}
+}

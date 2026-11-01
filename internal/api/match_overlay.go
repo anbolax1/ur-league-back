@@ -46,6 +46,7 @@ func (s *Server) storeHeatSide(ctx context.Context, tournamentID, participantID 
 	stored := s.storedLiveState(ctx)
 	stored.TournamentID = &tournamentID
 	stored.CurrentParticipantID = &participantID
+	stored.Timer = nil // таймер относился к заходу прошлой стороны
 	if norm, err := json.Marshal(stored); err == nil {
 		_ = s.Store.SetLiveState(ctx, norm)
 	}
@@ -59,6 +60,16 @@ func (s *Server) withHeatSide(ctx context.Context, st *models.MatchState) {
 	if p := heatSide(sidesBySeed(st.Tournament), st.Tournament.ID, s.storedLiveState(ctx)); p != nil {
 		st.Focus = p.ID
 	}
+	st.Timer = s.storedTimer(ctx, st.Tournament.ID)
+}
+
+// storedTimer - запущенный в пульте таймер задания на время; чужого матча и прошлого захода он не касается.
+func (s *Server) storedTimer(ctx context.Context, tournamentID string) *models.LiveTimer {
+	stored := s.storedLiveState(ctx)
+	if stored.TournamentID == nil || *stored.TournamentID != tournamentID {
+		return nil
+	}
+	return stored.Timer
 }
 
 // matchLiveState - табло матча для оверлея: счёт и задания из базы, рейтинг сторон и пояс лиги.
@@ -236,6 +247,9 @@ func buildMatchLiveState(st models.MatchState, stored models.LiveState) models.L
 	}
 	if stored.TournamentID != nil && *stored.TournamentID == t.ID {
 		ls.PatchFlashes = stored.PatchFlashes
+		if st.Stage == "round" {
+			ls.Timer = stored.Timer
+		}
 	}
 	for _, p := range parts {
 		ls.Standings = append(ls.Standings, models.LiveStanding{ParticipantID: p.ID, Name: p.Name, Points: total[p.ID], RoundPoints: inRound[p.ID]})

@@ -189,6 +189,8 @@ func (s *Server) Router() http.Handler {
 			r.Post("/tournaments/{id}/legendary", s.handleMatchLegendary)
 			r.Post("/tournaments/{id}/undo", s.handleMatchUndo)
 			r.Post("/tournaments/{id}/duel", s.handleMatchDuel)
+			r.Post("/tournaments/{id}/timer", s.handleStartTimer)
+			r.Delete("/tournaments/{id}/timer", s.handleStopTimer)
 			r.Post("/round-bonus-tasks/{id}/mark", s.handleMarkTask)
 			r.Post("/round-bonus-tasks/{id}/reroll", s.handleRerollTask)
 
