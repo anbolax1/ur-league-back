@@ -64,9 +64,25 @@ func tokenBalance(ctx context.Context, q rowQuerier, userID, kind string) (int, 
 // priorityUntil - «Без очереди» действует до конца игрового дня по Москве, в который его активировали.
 func priorityUntil(at time.Time) time.Time { return mskDay(at).AddDate(0, 0, 1) }
 
+// seasonalResetNote - пометка жетона сброса, который каждый игрок получает на сезон сам; по ней же уникальный индекс.
+const seasonalResetNote = "жетон сезона"
+
+// ensureSeasonalReset выдаёт игроку жетон сброса идущего сезона, если он его ещё не получал: по одному на сезон
+// каждому, без участия модератора. Неиспользованный жетон остаётся, но сбросить рейтинг можно раз в сезон.
+func ensureSeasonalReset(ctx context.Context, q rowQuerier, userID string) error {
+	_, err := q.Exec(ctx, `
+		INSERT INTO token_ledger (user_id, kind, action, delta, note, season_id)
+		SELECT $1, 'reset', 'grant', 1, '`+seasonalResetNote+`', id FROM seasons WHERE status = 'active'
+		ON CONFLICT (user_id, season_id) WHERE kind = 'reset' AND action = 'grant' AND note = '`+seasonalResetNote+`' DO NOTHING`, userID)
+	return err
+}
+
 // TokenWallet - сколько у игрока жетонов и когда их можно тратить.
 func (s *Store) TokenWallet(ctx context.Context, userID string) (models.TokenWallet, error) {
 	var w models.TokenWallet
+	if err := ensureSeasonalReset(ctx, s.Pool, userID); err != nil {
+		return w, err
+	}
 	rows, err := s.Pool.Query(ctx, `SELECT kind, COALESCE(SUM(delta), 0)::int FROM token_ledger WHERE user_id = $1 GROUP BY kind`, userID)
 	if err != nil {
 		return w, err
@@ -121,6 +137,11 @@ func (s *Store) GrantTokens(ctx context.Context, userID, kind string, delta int,
 	defer tx.Rollback(ctx)
 	if err := lockUser(ctx, tx, userID); err != nil {
 		return err
+	}
+	if kind == TokenReset {
+		if err := ensureSeasonalReset(ctx, tx, userID); err != nil {
+			return err
+		}
 	}
 	bal, err := tokenBalance(ctx, tx, userID, kind)
 	if err != nil {
@@ -420,6 +441,9 @@ func resetCheck(ctx context.Context, q rowQuerier, userID string, rule seasonRul
 
 // ResetBlocked - почему игрок сейчас не может сбросить рейтинг; nil - может.
 func (s *Store) ResetBlocked(ctx context.Context, userID string) error {
+	if err := ensureSeasonalReset(ctx, s.Pool, userID); err != nil {
+		return err
+	}
 	_, err := resetCheck(ctx, s.Pool, userID, s.activeSeasonRule(ctx))
 	return err
 }
@@ -434,6 +458,9 @@ func (s *Store) ResetRating(ctx context.Context, userID string) error {
 	}
 	defer tx.Rollback(ctx)
 	if err := lockUser(ctx, tx, userID); err != nil {
+		return err
+	}
+	if err := ensureSeasonalReset(ctx, tx, userID); err != nil {
 		return err
 	}
 	sum, err := resetCheck(ctx, tx, userID, rule)

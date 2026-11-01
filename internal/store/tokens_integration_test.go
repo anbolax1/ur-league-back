@@ -200,8 +200,9 @@ func TestTokensIntegration(t *testing.T) {
 	}
 
 	// --- сброс рейтинга: MMR снова стартовый, раз в сезон, пересчёт повторяет его ---
-	if err := st.ResetBlocked(ctx, a.ID); !errors.Is(err, store.ErrNoTokens) {
-		t.Errorf("сброс без жетона: %v, want ErrNoTokens", err)
+	// Жетон сезона у игрока уже есть сам, без выдачи модератором.
+	if err := st.ResetBlocked(ctx, a.ID); err != nil {
+		t.Errorf("сброс по жетону сезона: %v, want можно", err)
 	}
 	grant(a, store.TokenReset, 2)
 	live, _ := match("1x1", player(a, 1), player(d, 2))
@@ -226,7 +227,7 @@ func TestTokensIntegration(t *testing.T) {
 	if err := st.ResetRating(ctx, a.ID); !errors.Is(err, store.ErrResetUsed) {
 		t.Errorf("второй сброс в сезоне: %v, want ErrResetUsed", err)
 	}
-	if w := wallet(a); w.Reset != 1 || w.LastReset == nil || !w.ResetUsed {
+	if w := wallet(a); w.Reset != 2 || w.LastReset == nil || !w.ResetUsed {
 		t.Errorf("кошелёк после сброса: %+v; want остался 1 жетон, дата сброса и отметка сезона", w)
 	}
 	m5, pa5 := match("1x1", player(a, 1), player(b, 2))
@@ -283,5 +284,20 @@ func TestTokensIntegration(t *testing.T) {
 	}
 	if err := st.GrantTokens(ctx, b.ID, store.TokenPriority, -3, "", ""); !errors.Is(err, store.ErrTokenBalance) {
 		t.Errorf("забрать больше, чем есть: %v, want ErrTokenBalance", err)
+	}
+
+	// --- жетон сезона: каждому по одному на сезон, без модератора, дважды в сезон не выдаётся ---
+	fresh := mkUser("fresh")
+	if w := wallet(fresh); w.Reset != 1 {
+		t.Errorf("жетон сезона у нового игрока: %d, want 1", w.Reset)
+	}
+	if w := wallet(fresh); w.Reset != 1 {
+		t.Errorf("повторное чтение кошелька выдало ещё жетон: %d", w.Reset)
+	}
+	if _, err := st.StartNewSeason(ctx, fmt.Sprintf("tk-%d-next", uniq), 32, 1000); err != nil {
+		t.Fatalf("StartNewSeason: %v", err)
+	}
+	if w := wallet(fresh); w.Reset != 2 {
+		t.Errorf("с новым сезоном жетонов %d, want 2", w.Reset)
 	}
 }
