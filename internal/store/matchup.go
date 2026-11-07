@@ -89,8 +89,9 @@ func (s *Store) Matchup(ctx context.Context, tournamentID string) (models.Matchu
 			// Жетон ×2 удваивает и выигрыш, и проигрыш своей стороны, соперника не трогает.
 			mult := max(t.RatingMultiplier, 1)
 			ta, tb := sideTokenMult(a), sideTokenMult(b)
-			ga := eloWinMagnitude(a.Mmr, b.Mmr, mult, t.Games, rule.K)
-			gb := eloWinMagnitude(b.Mmr, a.Mmr, mult, t.Games, rule.K)
+			k := matchRule(rule, t.TotalRounds).K
+			ga := eloWinMagnitude(a.Mmr, b.Mmr, mult, t.Games, k)
+			gb := eloWinMagnitude(b.Mmr, a.Mmr, mult, t.Games, k)
 			a.WinGain, b.LossDrop = ga*ta, ga*tb
 			b.WinGain, a.LossDrop = gb*tb, gb*ta
 		}

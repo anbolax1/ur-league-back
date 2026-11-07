@@ -26,6 +26,17 @@ type seasonRule struct {
 	Start int
 }
 
+// singleRoundKDivisor - во сколько раз рейтинг в матче на один раунд меняется слабее: меньше игры - меньше ставка.
+const singleRoundKDivisor = 2
+
+// matchRule - правила рейтинга для матча: в матче на один раунд K вдвое ниже.
+func matchRule(rule seasonRule, totalRounds int) seasonRule {
+	if totalRounds == 1 {
+		rule.K = max(rule.K/singleRoundKDivisor, 1)
+	}
+	return rule
+}
+
 func (s *Store) tournamentSeasonRule(ctx context.Context, tournamentID string) (seasonRule, error) {
 	var r seasonRule
 	err := s.Pool.QueryRow(ctx, `
@@ -274,6 +285,7 @@ func (s *Store) ApplyTournamentMmr(ctx context.Context, tournamentID string) err
 	if err != nil {
 		return err
 	}
+	rule = matchRule(rule, t.TotalRounds)
 	doubled, err := s.doubledUsers(ctx, tournamentID)
 	if err != nil {
 		return err

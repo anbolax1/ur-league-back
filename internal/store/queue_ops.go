@@ -891,7 +891,7 @@ func (s *Store) ConfirmEntry(ctx context.Context, sessionID, actor, entryID stri
 // QueueMatchStart - как создать матч сайта для вызванной пары.
 type QueueMatchStart struct {
 	Force  bool // создать, не дожидаясь подтверждения готовности
-	Rounds int  // 2 или 3 раунда, по умолчанию 2
+	Rounds int  // 1, 2 или 3 раунда, по умолчанию 2
 }
 
 // StartQueueMatch создаёт матч сайта для двух вызванных (он сразу становится текущим, дальше пики-баны и раунды
@@ -900,8 +900,8 @@ func (s *Store) StartQueueMatch(ctx context.Context, sessionID, actor string, in
 	if in.Rounds == 0 {
 		in.Rounds = 2
 	}
-	if in.Rounds != 2 && in.Rounds != 3 {
-		return QueueResult{}, qInvalid("в матче два или три раунда")
+	if in.Rounds < 1 || in.Rounds > 3 {
+		return QueueResult{}, qInvalid("в матче от одного до трёх раундов")
 	}
 	var created string
 	res, err := s.queueTx(ctx, sessionID, actor, func(q *qtx) error {

@@ -52,8 +52,10 @@ func (s *Store) CreateTournament(ctx context.Context, t models.Tournament) (mode
 	if t.Status == "" {
 		t.Status = "upcoming"
 	}
-	// Ровно 1 раунд на турнир (один раунд = один рейд) — менять нельзя.
-	t.TotalRounds = 1
+	// Обычный матч - два раунда и больше: матч на один раунд двигает рейтинг слабее (matchRule), его задают явно.
+	if t.TotalRounds < 1 {
+		t.TotalRounds = 2
+	}
 	if t.RatingMultiplier < 1 {
 		t.RatingMultiplier = 1
 	}

@@ -36,10 +36,14 @@ const (
 	FormatShow  = "show"
 )
 
-// MatchRounds - сколько раундов будет в новом матче: у шоу-матча всегда три, обычный - два или три.
+// MatchRounds - сколько раундов будет в новом матче: у шоу-матча всегда три, обычный - один, два или три.
+// Матч на один раунд двигает рейтинг вдвое слабее (matchRule).
 func MatchRounds(format string, rounds int) int {
-	if format == FormatShow || rounds == 3 {
+	switch {
+	case format == FormatShow || rounds == 3:
 		return 3
+	case rounds == 1:
+		return 1
 	}
 	return 2
 }
