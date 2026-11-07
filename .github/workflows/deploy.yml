@@ -57,12 +57,11 @@ jobs:
           scp -i ~/.ssh/id -o StrictHostKeyChecking=accept-new server-linux.new "$SSH_USER@$SSH_HOST:ur-back/"
           $SSH "$SSH_USER@$SSH_HOST" '
             set -e
-            export XDG_RUNTIME_DIR=/run/user/$(id -u)
             chmod +x ~/ur-back/server-linux.new
             mv -f ~/ur-back/server-linux.new ~/ur-back/server-linux
-            systemctl --user restart ur-back
+            sudo systemctl restart ur-back
             sleep 2
             curl -fsS localhost:8090/api/health
             echo
-            journalctl --user -u ur-back -n 10 --no-pager | grep -iE "goose|migrat|version" || true
+            journalctl -u ur-back -n 10 --no-pager | grep -iE "goose|migrat|version" || true
           '
