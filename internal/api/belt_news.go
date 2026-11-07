@@ -99,6 +99,15 @@ func beltNews(b models.Belt, e store.BeltEvent) beltNewsItem {
 				ruDate(*prev.To), html.EscapeString(beltName(prev.Holder)), gameDays))
 		}
 		p = append(p, beltNewcomer(r, html.EscapeString(x)))
+	case "hand":
+		out.title = x + " получил пояс лиги"
+		p = append(p, fmt.Sprintf("Организатор лиги передал пояс от %s к %s без матча: прежний носитель больше не играет.",
+			beltLink(beltOpponent(r)), beltLink(r.Holder)))
+		if prev != nil && prev.To != nil {
+			p = append(p, fmt.Sprintf("%s держал пояс %s и %s.", html.EscapeString(beltName(prev.Holder)),
+				ruCount(beltDays(prev.From, *prev.To), "день", "дня", "дней"), beltDefended(len(prev.Defenses))))
+		}
+		p = append(p, beltNewcomer(r, html.EscapeString(x)))
 	case "drop":
 		out.title = "Пояс лиги выпал у " + x
 		out.art.Vacant = true

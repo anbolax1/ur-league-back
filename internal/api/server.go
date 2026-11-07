@@ -229,6 +229,9 @@ func (s *Server) Router() http.Handler {
 			r.Patch("/catalog/tasks/{id}", s.handleUpdateTask)
 			r.Delete("/catalog/tasks/{id}", s.handleDeleteTask)
 
+			// Пояс лиги: передача другому игроку без матча (носитель ушёл из лиги).
+			r.Post("/belt/transfer", s.handleTransferBelt)
+
 			// Легендарные контракты: каталог + отметка выполнения (навсегда) / возврат в пул.
 			r.Post("/catalog/legendary", s.handleCreateLegendary)
 			r.Patch("/catalog/legendary/{id}", s.handleUpdateLegendary)

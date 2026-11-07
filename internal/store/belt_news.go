@@ -38,6 +38,9 @@ func BeltEvents(b models.Belt) []BeltEvent {
 		if r.End == "drop" && r.To != nil {
 			out = append(out, BeltEvent{Key: "drop:" + r.MatchID, Kind: "drop", At: *r.To, Reign: i})
 		}
+		if r.How == "hand" {
+			out = append(out, BeltEvent{Key: "hand:" + r.Holder.UserID + ":" + r.From.UTC().Format(time.RFC3339), Kind: "hand", At: r.From, Reign: i})
+		}
 	}
 	return out
 }

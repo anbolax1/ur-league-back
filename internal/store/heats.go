@@ -113,8 +113,8 @@ const (
 	MaxPlace = 16
 )
 
-// SetHeatPlace записывает место стороны в матче PUBG по экрану итогов захода; nil - стереть. Отдаёт прежнее
-// место - для отмены из журнала.
+// SetHeatPlace записывает топ-1 («чикен») стороны по экрану итогов захода; nil - стереть. Отдаёт прежнее
+// место - для отмены из журнала. Места 2-16 больше не фиксируем (решение 09.11.2026), старые остаются в истории.
 func (s *Store) SetHeatPlace(ctx context.Context, roundID, participantID string, place *int) (*int, error) {
 	var prev *int
 	err := s.Pool.QueryRow(ctx,

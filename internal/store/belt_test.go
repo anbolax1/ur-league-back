@@ -171,3 +171,48 @@ func TestBeltForSeasonAndHonor(t *testing.T) {
 		t.Fatalf("10 защит за всё время - почётный носитель eden: %v", h)
 	}
 }
+
+// Передача организатором: пояс уходит носителю без матча, ржавчина нового носителя - с момента передачи,
+// а матч после передачи разыгрывает уже новый носитель.
+func TestBeltHandTransfer(t *testing.T) {
+	c := newBeltCase()
+	c.play("eden", "x")
+	c.play("eden", "y")
+	at := c.day.Add(2*time.Minute + 30*time.Second) // между матчами дня: после взятия пояса, до матча makar
+	c.in.transfers = append(c.in.transfers, beltTransfer{from: "eden", to: "makar", season: "s3", at: at})
+	c.play("z", "makar") // makar держит пояс и проигрывает
+	st := computeBelt(c.in, c.day)
+
+	if got := holders(st); len(got) != 3 || got[0] != "eden:first" || got[1] != "makar:hand" || got[2] != "z:take" {
+		t.Fatalf("eden передал пояс makar, тот проиграл его z: %v", got)
+	}
+	eden := st.reigns[0]
+	if eden.end != "hand" || eden.lostTo != "makar" || !eden.to.Equal(at) {
+		t.Fatalf("владение eden кончилось передачей makar: %+v", eden)
+	}
+	makar := st.reigns[1]
+	if makar.opp != "eden" || makar.end != "lost" || makar.lostTo != "z" || len(makar.defs) != 0 {
+		t.Fatalf("makar взял пояс передачей от eden и потерял его без защит: %+v", makar)
+	}
+}
+
+// Передача, когда пояс уже выпал от ржавчины: забирать не у кого, пояс достаётся новому носителю,
+// а владение прежнего так и остаётся «выпавшим».
+func TestBeltHandTransferAfterDrop(t *testing.T) {
+	c := newBeltCase()
+	c.play("eden", "x")
+	for range BeltRustDays + 1 {
+		c.nextDay()
+		c.play("y", "z")
+	}
+	// Передача рано утром десятого дня: пояс выпал в полночь, а сегодняшний матч (он бы разыграл ничей пояс) ещё не сыгран.
+	c.in.transfers = append(c.in.transfers, beltTransfer{from: "eden", to: "makar", season: "s3", at: c.day.Add(-time.Hour)})
+	st := computeBelt(c.in, c.day)
+
+	if got := holders(st); len(got) != 2 || got[0] != "eden:first" || got[1] != "makar:hand" {
+		t.Fatalf("пояс выпал у eden, передача отдала его makar: %v", got)
+	}
+	if st.reigns[0].end != "drop" {
+		t.Fatalf("владение eden кончилось выпадением, а не передачей: %+v", st.reigns[0])
+	}
+}

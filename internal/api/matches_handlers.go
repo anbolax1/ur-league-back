@@ -553,16 +553,16 @@ func (s *Server) startedRound(w http.ResponseWriter, r *http.Request, tournament
 	return models.Round{}, nil, false
 }
 
-// placeText - место в журнале матча: «3-е место», nil - место стёрто.
+// placeText - место в журнале матча: «топ-1», nil - отметка стёрта.
 func placeText(place *int) string {
 	if place == nil {
-		return "место стёрто"
+		return "топ-1 стёрт"
 	}
-	return fmt.Sprintf("%d-е место", *place)
+	return "топ-1 — чикен"
 }
 
-// POST /api/tournaments/{id}/heat/place {participantId, place, roundNumber?} - место стороны в матче PUBG по
-// экрану итогов захода: 1-16, null - стереть. Без roundNumber - в идущем раунде.
+// POST /api/tournaments/{id}/heat/place {participantId, place, roundNumber?} - топ-1 («чикен») стороны по
+// экрану итогов захода: 1, null - стереть. Места 2-16 больше не фиксируем. Без roundNumber - в идущем раунде.
 func (s *Server) handleHeatPlace(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "id")
 	if !s.matchGuard(w, r, id) {
@@ -577,8 +577,8 @@ func (s *Server) handleHeatPlace(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "укажите сторону и место")
 		return
 	}
-	if b.Place != nil && (*b.Place < store.MinPlace || *b.Place > store.MaxPlace) {
-		writeError(w, http.StatusBadRequest, fmt.Sprintf("место — от %d до %d", store.MinPlace, store.MaxPlace))
+	if b.Place != nil && *b.Place != 1 {
+		writeError(w, http.StatusBadRequest, "фиксируем только топ-1")
 		return
 	}
 	rd, names, ok := s.startedRound(w, r, id, b.ParticipantID, b.RoundNumber)

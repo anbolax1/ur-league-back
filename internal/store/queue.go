@@ -221,7 +221,11 @@ func queueMembers(ctx context.Context, db queryer, sessionID string) (map[string
 			users = append(users, m.UserID)
 		}
 	}
-	today, err := queueTodayMatches(ctx, db, users)
+	var since time.Time
+	if err := db.QueryRow(ctx, `SELECT created_at FROM queue_sessions WHERE id = $1`, sessionID).Scan(&since); err != nil {
+		return nil, err
+	}
+	today, err := queueTodayMatches(ctx, db, users, since)
 	if err != nil {
 		return nil, err
 	}

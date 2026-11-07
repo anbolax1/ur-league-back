@@ -47,12 +47,20 @@ type beltFix struct {
 	after        int
 }
 
+// beltTransfer - ручная передача пояса организатором: событие наравне с матчем.
+type beltTransfer struct {
+	from, to string
+	season   string
+	at       time.Time
+}
+
 // beltInput - все завершённые матчи 1×1 по времени со сверками рейтинга. Шоу-матчи пояс не трогают,
 // но двигают таблицу сезона, а по ней ищется лидер, который разыграет ничей пояс.
 type beltInput struct {
-	matches []beltMatch
-	fixes   []beltFix
-	current string // идущий сезон: в нём ищется лидер, пока пояс ничей
+	matches   []beltMatch
+	fixes     []beltFix
+	transfers []beltTransfer
+	current   string // идущий сезон: в нём ищется лидер, пока пояс ничей
 }
 
 type beltDef struct {
@@ -165,15 +173,19 @@ func computeBelt(in beltInput, now time.Time) beltState {
 		}
 	}
 
-	// Сверка в один момент с матчем идёт раньше него, как в пересчёте MMR.
+	// Сверка и передача в один момент с матчем идут раньше него, как в пересчёте MMR.
 	type event struct {
 		fix   *beltFix
+		tr    *beltTransfer
 		match *beltMatch
 		at    time.Time
 	}
-	events := make([]event, 0, len(in.matches)+len(in.fixes))
+	events := make([]event, 0, len(in.matches)+len(in.fixes)+len(in.transfers))
 	for i := range in.fixes {
 		events = append(events, event{fix: &in.fixes[i], at: in.fixes[i].at})
+	}
+	for i := range in.transfers {
+		events = append(events, event{tr: &in.transfers[i], at: in.transfers[i].at})
 	}
 	for i := range in.matches {
 		events = append(events, event{match: &in.matches[i], at: in.matches[i].at})
@@ -182,13 +194,29 @@ func computeBelt(in beltInput, now time.Time) beltState {
 		if !events[i].at.Equal(events[j].at) {
 			return events[i].at.Before(events[j].at)
 		}
-		return events[i].fix != nil && events[j].fix == nil
+		return events[i].match == nil && events[j].match != nil
 	})
 
 	for _, e := range events {
 		if f := e.fix; f != nil {
 			m, _ := table(f.season)
 			m[f.user] = f.after
+			continue
+		}
+		if tr := e.tr; tr != nil {
+			day := patchDay(tr.at)
+			rust(day) // если к передаче пояс уже выпал от ржавчины, забирать не у кого
+			// Передача отнимает пояс у носителя без матча; часы ржавчины идут с момента передачи.
+			// Если к моменту передачи пояс перешёл третьему, запись устарела и не трогает его.
+			if holder != "" && holder != tr.from {
+				continue
+			}
+			if holder != "" {
+				r := &st.reigns[len(st.reigns)-1]
+				r.to, r.end, r.lostTo = tr.at, "hand", tr.to
+			}
+			st.reigns = append(st.reigns, beltReign{holder: tr.to, from: tr.at, how: "hand", season: tr.season, opp: tr.from})
+			holder, last = tr.to, day
 			continue
 		}
 		m := e.match
@@ -437,7 +465,30 @@ func (s *Store) loadBeltInput(ctx context.Context) (beltInput, map[string]models
 	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
 		return in, nil, err
 	}
-	return in, names, nil
+
+	trows, err := s.Pool.Query(ctx, `
+		SELECT tr.from_user, tr.to_user, COALESCE(tr.season_id, ''), tr.created_at,
+		       fu.login, COALESCE(NULLIF(fu.display_name, ''), fu.login),
+		       tu.login, COALESCE(NULLIF(tu.display_name, ''), tu.login)
+		FROM belt_transfers tr
+		LEFT JOIN users fu ON fu.id = tr.from_user
+		LEFT JOIN users tu ON tu.id = tr.to_user
+		ORDER BY tr.created_at`)
+	if err != nil {
+		return in, nil, err
+	}
+	defer trows.Close()
+	for trows.Next() {
+		var from, to, season, flogin, fname, tlogin, tname string
+		var at time.Time
+		if err := trows.Scan(&from, &to, &season, &at, &flogin, &fname, &tlogin, &tname); err != nil {
+			return in, nil, err
+		}
+		in.transfers = append(in.transfers, beltTransfer{from: from, to: to, season: season, at: at})
+		names[from] = models.BeltPlayer{UserID: from, Login: flogin, DisplayName: fname}
+		names[to] = models.BeltPlayer{UserID: to, Login: tlogin, DisplayName: tname}
+	}
+	return in, names, trows.Err()
 }
 
 type beltCache struct {
@@ -479,6 +530,7 @@ func (s *Store) beltVersion(ctx context.Context) (string, error) {
 			(SELECT count(*) || ':' || COALESCE(max(updated_at)::text, '') FROM tournaments WHERE mode = '1x1'),
 			(SELECT count(*) || ':' || COALESCE(sum(delta), 0) || ':' || COALESCE(sum(mmr_after), 0) FROM mmr_history WHERE mode = '1x1'),
 			(SELECT string_agg(id || status, ',' ORDER BY started_at) FROM seasons),
+			(SELECT count(*) || ':' || COALESCE(max(created_at)::text, '') FROM belt_transfers),
 			(SELECT COALESCE(max(updated_at)::text, '') FROM users))`).Scan(&v)
 	return v + "|" + patchDay(time.Now()), err
 }
@@ -532,4 +584,43 @@ func (s *Store) MatchBelt(ctx context.Context, st models.MatchState) (*models.Li
 		}
 	}
 	return nil, nil
+}
+
+// ErrBeltVacant - пояс ничей: передавать нечего, его разыграет матч.
+var ErrBeltVacant = errors.New("пояс сейчас ничей")
+
+// ErrBeltSame - пояс уже у этого игрока.
+var ErrBeltSame = errors.New("пояс уже у этого игрока")
+
+// TransferBelt - организатор передаёт пояс другому игроку без матча (носитель ушёл из лиги).
+// Запись становится событием истории пояса наравне с матчами.
+func (s *Store) TransferBelt(ctx context.Context, actor, toUserID string) (models.Belt, error) {
+	b, err := s.Belt(ctx)
+	if err != nil {
+		return models.Belt{}, err
+	}
+	if b.Holder == nil {
+		return models.Belt{}, ErrBeltVacant
+	}
+	if b.Holder.UserID == toUserID {
+		return models.Belt{}, ErrBeltSame
+	}
+	var hidden bool
+	err = s.Pool.QueryRow(ctx, `SELECT hidden_at IS NOT NULL FROM users WHERE id = $1`, toUserID).Scan(&hidden)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return models.Belt{}, ErrNotFound
+	}
+	if err != nil {
+		return models.Belt{}, err
+	}
+	if hidden {
+		return models.Belt{}, ErrNotFound
+	}
+	if _, err := s.Pool.Exec(ctx, `
+		INSERT INTO belt_transfers (from_user, to_user, by_user, season_id)
+		VALUES ($1, $2, NULLIF($3, ''), (SELECT id FROM seasons ORDER BY status = 'active' DESC, started_at DESC LIMIT 1))`,
+		b.Holder.UserID, toUserID, actor); err != nil {
+		return models.Belt{}, err
+	}
+	return s.Belt(ctx)
 }

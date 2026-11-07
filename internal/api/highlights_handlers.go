@@ -89,6 +89,12 @@ func (s *Server) createHighlightUpload(w http.ResponseWriter, r *http.Request, u
 		writeError(w, http.StatusBadRequest, "файл слишком большой или некорректная форма (макс. 200 МБ)")
 		return
 	}
+	// Временные файлы формы Go не удаляет сам: без этого /tmp забивается старыми загрузками.
+	defer func() {
+		if r.MultipartForm != nil {
+			_ = r.MultipartForm.RemoveAll()
+		}
+	}()
 	file, hdr, err := r.FormFile("file")
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "приложите видео-файл в поле file")

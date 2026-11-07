@@ -40,6 +40,7 @@ type qSession struct {
 	RegistrationOpen, Paused  bool
 	TimeoutSec                int
 	Rev                       int64
+	CreatedAt                 time.Time // старт сессии: с него считаются матчи для порядка
 }
 
 func (q *qSession) active() bool { return q.Status == "active" }
@@ -53,10 +54,10 @@ func (s *Store) queueTx(ctx context.Context, sessionID, actor string, fn func(q 
 	defer tx.Rollback(ctx)
 	q := &qtx{ctx: ctx, tx: tx, actor: actor}
 	err = tx.QueryRow(ctx, `
-		SELECT id, title, format, status, registration_open, paused, confirm_timeout_sec, rev
+		SELECT id, title, format, status, registration_open, paused, confirm_timeout_sec, rev, created_at
 		FROM queue_sessions WHERE id = $1 FOR UPDATE`, sessionID).
 		Scan(&q.sess.ID, &q.sess.Title, &q.sess.Format, &q.sess.Status, &q.sess.RegistrationOpen, &q.sess.Paused,
-			&q.sess.TimeoutSec, &q.sess.Rev)
+			&q.sess.TimeoutSec, &q.sess.Rev, &q.sess.CreatedAt)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return QueueResult{}, ErrNotFound
 	}
@@ -133,7 +134,7 @@ type qEntry struct {
 	Status    string
 	Position  int
 	Performed int // выступлений в этой сессии: для показа
-	Today     int // матчей игрока за сегодня: по ним встаёт порядок
+	Today     int // матчей игрока с начала сессии: по ним встаёт порядок
 	Skipped   int
 	TeamKey   string
 	Label     string
@@ -166,7 +167,7 @@ func (q *qtx) load() ([]queueItem, map[string]*qEntry, error) {
 	}
 	rows.Close() // дальше запросы на той же транзакции
 
-	// Порядок строится по матчам игроков за сегодня: кто сегодня уже играл, стоит позади тех, кто нет.
+	// Порядок строится по матчам игроков с начала сессии: кто на этом стриме уже играл, стоит позади тех, кто нет.
 	mrows, err := q.tx.Query(q.ctx, `SELECT entry_id, user_id FROM queue_entry_members WHERE session_id = $1 AND active`, q.sess.ID)
 	if err != nil {
 		return nil, nil, err
@@ -186,7 +187,7 @@ func (q *qtx) load() ([]queueItem, map[string]*qEntry, error) {
 		return nil, nil, err
 	}
 	mrows.Close()
-	today, err := queueTodayMatches(q.ctx, q.tx, all)
+	today, err := queueTodayMatches(q.ctx, q.tx, all, q.sess.CreatedAt)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -616,7 +617,7 @@ func (s *Store) JoinQueue(ctx context.Context, sessionID, actor string, in Queue
 				return err
 			}
 		}
-		todayMatches, err := queueTodayMatches(q.ctx, q.tx, members)
+		todayMatches, err := queueTodayMatches(q.ctx, q.tx, members, q.sess.CreatedAt)
 		if err != nil {
 			return err
 		}

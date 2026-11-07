@@ -5,9 +5,10 @@ import (
 	"time"
 )
 
-// queueTodayMatches - сколько завершённых матчей сайта игрок сыграл сегодня (день по Москве). Считаются все матчи,
-// не только из очереди, и любые форматы: игрок, который уже выходил в эфир сегодня, пропускает вперёд остальных.
-func queueTodayMatches(ctx context.Context, db queryer, userIDs []string) (map[string]int, error) {
+// queueTodayMatches - сколько завершённых матчей сайта игрок сыграл с момента since (старт сессии очереди).
+// Считаются все матчи, не только из очереди, и любые форматы: игрок, который уже выходил в эфир на этом
+// стриме, пропускает вперёд остальных. Матчи до старта сессии не в счёт - новый стрим, очередь с нуля.
+func queueTodayMatches(ctx context.Context, db queryer, userIDs []string, since time.Time) (map[string]int, error) {
 	out := map[string]int{}
 	if len(userIDs) == 0 {
 		return out, nil
@@ -18,7 +19,7 @@ func queueTodayMatches(ctx context.Context, db queryer, userIDs []string) (map[s
 		JOIN participants p ON p.user_id = u.id OR p.members @> jsonb_build_array(jsonb_build_object('userId', u.id))
 		JOIN tournaments t ON t.id = p.tournament_id
 		WHERE u.id = ANY($1) AND t.status = 'finished' AND COALESCE(t.starts_at, t.created_at) >= $2
-		GROUP BY u.id`, userIDs, mskDay(time.Now()))
+		GROUP BY u.id`, userIDs, since)
 	if err != nil {
 		return nil, err
 	}
