@@ -43,6 +43,10 @@ type trailEvent struct {
 	asg   string
 	prev  *string
 	tgt   *string
+	// Зачёт соперника отдельно от зачёта владельца; hasOpp - false у записей журнала старого вида.
+	prevOpp *string
+	tgtOpp  *string
+	hasOpp  bool
 }
 
 // MatchChanceTrail - как менялся шанс по ходу матча: перед ним, после каждого действия в пульте и когда
@@ -283,25 +287,33 @@ func applyTaskLog(raids [][2]trailRaid, tasks map[string]*trailTask, sideOf map[
 		}
 		return
 	}
-	credit := func(pid *string, sign int) {
+	own := func(pid *string, sign int) {
 		if pid == nil {
 			return
 		}
-		side, ok := sideOf[*pid]
-		if !ok {
-			return
-		}
-		x := &raids[task.round][side]
-		if side == task.side {
+		if side, ok := sideOf[*pid]; ok && side == task.side {
+			x := &raids[task.round][side]
 			x.points += sign * task.points
 			x.ownDone += sign * task.points
 			task.done = sign > 0
-		} else {
-			x.points += sign * ContractCrossPoints
 		}
 	}
-	credit(e.prev, -1)
-	credit(e.tgt, 1)
+	opp := func(pid *string, sign int) {
+		if pid == nil {
+			return
+		}
+		if side, ok := sideOf[*pid]; ok && side != task.side {
+			raids[task.round][side].points += sign * ContractCrossPoints
+		}
+	}
+	prevOpp, tgtOpp := e.prevOpp, e.tgtOpp
+	if !e.hasOpp {
+		prevOpp, tgtOpp = e.prev, e.tgt
+	}
+	own(e.prev, -1)
+	opp(prevOpp, -1)
+	own(e.tgt, 1)
+	opp(tgtOpp, 1)
 }
 
 // trailEvents - начала заходов и действия журнала матча по времени.
@@ -339,9 +351,13 @@ func (s *Store) trailEvents(ctx context.Context, tournamentID string, sideOf map
 				AssignmentID string  `json:"assignmentId"`
 				Prev         *string `json:"prev"`
 				Target       *string `json:"target"`
+				PrevOpp      *string `json:"prevOpp"`
+				TargetOpp    *string `json:"targetOpp"`
+				HasOpp       bool    `json:"hasOpp"`
 			}
 			_ = json.Unmarshal(undo, &u)
 			e.asg, e.prev, e.tgt = u.AssignmentID, u.Prev, u.Target
+			e.prevOpp, e.tgtOpp, e.hasOpp = u.PrevOpp, u.TargetOpp, u.HasOpp
 		}
 		out = append(out, e)
 	}

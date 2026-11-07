@@ -56,6 +56,9 @@ func (s *Store) UndoLastMatchLog(ctx context.Context, tournamentID string) ([]st
 		AssignmentID  string     `json:"assignmentId"`
 		Prev          *string    `json:"prev"`
 		Target        *string    `json:"target"`
+		PrevOpp       *string    `json:"prevOpp"`
+		TargetOpp     *string    `json:"targetOpp"`
+		HasOpp        bool       `json:"hasOpp"`
 		RoundID       string     `json:"roundId"`
 		ParticipantID string     `json:"participantId"`
 		Applied       int        `json:"applied"`
@@ -70,10 +73,25 @@ func (s *Store) UndoLastMatchLog(ctx context.Context, tournamentID string) ([]st
 	affected := []string{}
 	switch u.Type {
 	case "task":
-		if err := s.SetTaskCompletedBy(ctx, u.AssignmentID, u.Prev); err != nil {
+		prevOpp, targetOpp := u.PrevOpp, u.TargetOpp
+		if !u.HasOpp {
+			// Запись журнала до отдельной отметки соперника: чужой исполнитель и есть сторона соперника.
+			var owner string
+			if err := s.Pool.QueryRow(ctx, `SELECT participant_id FROM round_bonus_tasks WHERE id = $1`, u.AssignmentID).Scan(&owner); err != nil {
+				return nil, err
+			}
+			prevOpp, targetOpp = nil, nil
+			if u.Prev != nil && *u.Prev != owner {
+				prevOpp = u.Prev
+			}
+			if u.Target != nil && *u.Target != owner {
+				targetOpp = u.Target
+			}
+		}
+		if err := s.SetTaskDone(ctx, u.AssignmentID, u.Prev, prevOpp); err != nil {
 			return nil, err
 		}
-		for _, p := range []*string{u.Prev, u.Target} {
+		for _, p := range []*string{u.Prev, u.Target, prevOpp, targetOpp} {
 			if p != nil {
 				affected = append(affected, *p)
 			}
@@ -177,13 +195,11 @@ func (s *Store) GetMatchState(ctx context.Context, tournamentID string) (models.
 		}
 	}
 	for _, task := range st.Tasks {
-		if task.CompletedBy == nil {
-			continue
-		}
-		if *task.CompletedBy == task.ParticipantID {
+		if task.CompletedBy != nil && *task.CompletedBy == task.ParticipantID {
 			add(scores, task.RoundNumber, task.ParticipantID, task.Points)
-		} else {
-			add(scores, task.RoundNumber, *task.CompletedBy, ContractCrossPoints)
+		}
+		if task.OpponentBy != nil {
+			add(scores, task.RoundNumber, *task.OpponentBy, ContractCrossPoints)
 		}
 	}
 	for _, l := range st.Legendary {

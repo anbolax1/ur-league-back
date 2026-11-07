@@ -181,7 +181,7 @@ func (s *Store) loadRecap(ctx context.Context, sn models.Season) (recapInput, er
 
 	// Задания: своё выполненное - очки из каталога, выполненное соперником - балл ему.
 	rows, err = s.Pool.Query(ctx, `
-		SELECT b.round_id, b.participant_id, COALESCE(b.completed_by, ''), ct.name, ct.text, ct.category, ct.points,
+		SELECT b.round_id, b.participant_id, COALESCE(b.completed_by, ''), COALESCE(b.opponent_by, ''), ct.name, ct.text, ct.category, ct.points,
 		       `+dealtTaskMap+`
 		FROM round_bonus_tasks b JOIN rounds r ON r.id = b.round_id JOIN tournaments t ON t.id = r.tournament_id
 		JOIN catalog_tasks ct ON ct.id = b.task_id
@@ -192,9 +192,9 @@ func (s *Store) loadRecap(ctx context.Context, sn models.Season) (recapInput, er
 		return in, err
 	}
 	for rows.Next() {
-		var rid, owner, doneBy, name, text, category, code string
+		var rid, owner, doneBy, oppBy, name, text, category, code string
 		var points int
-		if err := rows.Scan(&rid, &owner, &doneBy, &name, &text, &category, &points, &code); err != nil {
+		if err := rows.Scan(&rid, &owner, &doneBy, &oppBy, &name, &text, &category, &points, &code); err != nil {
 			rows.Close()
 			return in, err
 		}
@@ -209,9 +209,10 @@ func (s *Store) loadRecap(ctx context.Context, sn models.Season) (recapInput, er
 			t.doneBy = sd[1]
 			if sd[1] == so[1] {
 				r.points[sd[1]] += points
-			} else {
-				r.points[sd[1]] += ContractCrossPoints
 			}
+		}
+		if sd, ok := side[oppBy]; ok {
+			r.points[sd[1]] += ContractCrossPoints
 		}
 		r.tasks = append(r.tasks, t)
 	}

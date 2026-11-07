@@ -9,8 +9,9 @@ import (
 )
 
 // Задания сторон по раундам. Владелец задания = participant_id (кому выдано).
-// completed_by — кто фактически выполнил: владелец → очки задания, противник → +1, NULL → не выполнено.
-const rbtCols = `rbt.id, rbt.round_id, r.number, rbt.participant_id, rbt.task_id, ct.text, ct.points, ct.value_type, rbt.times, rbt.completed_by,
+// completed_by — владелец, если он выполнил (очки задания), иначе противник, иначе NULL; opponent_by — противник,
+// засчитавший чужое задание (+1): он может стоять и вместе с выполнением владельца.
+const rbtCols = `rbt.id, rbt.round_id, r.number, rbt.participant_id, rbt.task_id, ct.text, ct.points, ct.value_type, rbt.times, rbt.completed_by, rbt.opponent_by,
 	ct.name, ct.category, ct.tag, ` + dealtTaskMap
 
 // dealtTaskMap - карта выданного задания: у задания на картах это карта захода стороны, у общего - пусто.
@@ -22,7 +23,7 @@ const heatJoin = `LEFT JOIN round_entries re ON re.round_id = rbt.round_id AND r
 func scanRoundBonusTask(row pgx.Row) (models.RoundBonusTask, error) {
 	var t models.RoundBonusTask
 	err := row.Scan(&t.ID, &t.RoundID, &t.RoundNumber, &t.ParticipantID, &t.TaskID,
-		&t.Text, &t.Points, &t.ValueType, &t.Times, &t.CompletedBy,
+		&t.Text, &t.Points, &t.ValueType, &t.Times, &t.CompletedBy, &t.OpponentBy,
 		&t.Name, &t.Category, &t.Tag, &t.MapCode)
 	return t, err
 }
@@ -67,23 +68,27 @@ func (s *Store) OpponentParticipant(ctx context.Context, roundID, participantID 
 	return oppID, err
 }
 
-// MarkResult - итог отметки задания: прежний и новый исполнитель и чьи очки пересчитать.
+// MarkResult - итог отметки задания: прежнее и новое состояние зачёта и чьи очки пересчитать.
 type MarkResult struct {
-	RoundID  string
-	Owner    string
-	Prev     *string
-	Target   *string
-	Affected []string
+	RoundID   string
+	Owner     string
+	Prev      *string // completed_by до отметки
+	Target    *string // completed_by после
+	PrevOpp   *string // opponent_by до отметки
+	TargetOpp *string // opponent_by после
+	Affected  []string
 }
 
-// MarkTask - отметка исполнителя задания. Протокол засчитывается только владельцу.
+// MarkTask - отметка выполнения задания. Владелец и соперник засчитываются независимо: соперник
+// получает +1, а владелец всё равно может выполнить своё задание. Протокол засчитывается только владельцу.
+// by: owner / opponent - засчитать; owner_off / opponent_off - снять только эту сторону; none - снять всё.
 func (s *Store) MarkTask(ctx context.Context, id, by string) (MarkResult, error) {
 	var res MarkResult
 	var category string
 	err := s.Pool.QueryRow(ctx, `
-		SELECT rbt.round_id, rbt.participant_id, rbt.completed_by, ct.category
+		SELECT rbt.round_id, rbt.participant_id, rbt.completed_by, rbt.opponent_by, ct.category
 		FROM round_bonus_tasks rbt JOIN catalog_tasks ct ON ct.id = rbt.task_id
-		WHERE rbt.id = $1`, id).Scan(&res.RoundID, &res.Owner, &res.Prev, &category)
+		WHERE rbt.id = $1`, id).Scan(&res.RoundID, &res.Owner, &res.Prev, &res.PrevOpp, &category)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return res, ErrNotFound
 	}
@@ -91,35 +96,39 @@ func (s *Store) MarkTask(ctx context.Context, id, by string) (MarkResult, error)
 		return res, err
 	}
 
+	ownerDone := res.Prev != nil && *res.Prev == res.Owner
+	oppBy := res.PrevOpp
 	switch by {
 	case "owner":
-		// Зачёт владельцем имеет приоритет: ставится всегда и отменяет балл противника (перетирает completed_by).
-		res.Target = &res.Owner
+		ownerDone = true
+	case "owner_off":
+		ownerDone = false
 	case "opponent":
-		// Протокол - личное задание, противнику его не засчитать. Задание засчитывается противнику,
-		// ТОЛЬКО если владелец сам его не выполнил (иначе красть нечего).
-		if category == "protocol" || (res.Prev != nil && *res.Prev == res.Owner) {
+		// Протокол - личное задание, противнику его не засчитать.
+		if category == "protocol" {
 			return res, ErrConflict
 		}
 		opp, err := s.OpponentParticipant(ctx, res.RoundID, res.Owner)
 		if err != nil {
 			return res, err
 		}
-		res.Target = &opp
+		oppBy = &opp
+	case "opponent_off":
+		oppBy = nil
 	case "none", "":
-		res.Target = nil
+		ownerDone, oppBy = false, nil
 	default:
 		return res, ErrConflict
 	}
-	if err := s.SetTaskCompletedBy(ctx, id, res.Target); err != nil {
+	res.Target, res.TargetOpp = taskCompletedBy(res.Owner, ownerDone, oppBy), oppBy
+	if err := s.SetTaskDone(ctx, id, res.Target, res.TargetOpp); err != nil {
 		return res, err
 	}
 	set := map[string]bool{}
-	if res.Prev != nil {
-		set[*res.Prev] = true
-	}
-	if res.Target != nil {
-		set[*res.Target] = true
+	for _, p := range []*string{res.Prev, res.PrevOpp, res.Target, res.TargetOpp} {
+		if p != nil {
+			set[*p] = true
+		}
 	}
 	for k := range set {
 		res.Affected = append(res.Affected, k)
@@ -127,9 +136,17 @@ func (s *Store) MarkTask(ctx context.Context, id, by string) (MarkResult, error)
 	return res, nil
 }
 
-// SetTaskCompletedBy ставит исполнителя задания напрямую (для отмены из журнала).
-func (s *Store) SetTaskCompletedBy(ctx context.Context, id string, by *string) error {
-	_, err := s.Pool.Exec(ctx, `UPDATE round_bonus_tasks SET completed_by = $2 WHERE id = $1`, id, by)
+// taskCompletedBy - значение completed_by: владелец, если он выполнил, иначе соперник, засчитавший задание.
+func taskCompletedBy(owner string, ownerDone bool, oppBy *string) *string {
+	if ownerDone {
+		return &owner
+	}
+	return oppBy
+}
+
+// SetTaskDone ставит зачёт задания напрямую (для отмены из журнала).
+func (s *Store) SetTaskDone(ctx context.Context, id string, completedBy, opponentBy *string) error {
+	_, err := s.Pool.Exec(ctx, `UPDATE round_bonus_tasks SET completed_by = $2, opponent_by = $3 WHERE id = $1`, id, completedBy, opponentBy)
 	return err
 }
 
@@ -145,7 +162,7 @@ func (s *Store) GetBonusAssignment(ctx context.Context, id string) (models.Round
 		WHERE rbt.id = $1`, id)
 	var t models.RoundBonusTask
 	err := row.Scan(&t.ID, &t.RoundID, &t.RoundNumber, &t.ParticipantID, &t.TaskID,
-		&t.Text, &t.Points, &t.ValueType, &t.Times, &t.CompletedBy,
+		&t.Text, &t.Points, &t.ValueType, &t.Times, &t.CompletedBy, &t.OpponentBy,
 		&t.Name, &t.Category, &t.Tag, &t.MapCode, &tournamentID)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return t, "", ErrNotFound

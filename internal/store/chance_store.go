@@ -212,7 +212,7 @@ func (s *Store) loadChanceHistory(ctx context.Context) ([]chanceMatchRec, error)
 
 	// Задания: своё выполненное - очки из каталога, выполненное соперником - балл ему.
 	rows, err = s.Pool.Query(ctx, `
-		SELECT b.round_id, b.participant_id, COALESCE(b.completed_by, ''), ct.category, cardinality(ct.map_codes) > 0, ct.points
+		SELECT b.round_id, b.participant_id, COALESCE(b.completed_by, ''), COALESCE(b.opponent_by, ''), ct.category, cardinality(ct.map_codes) > 0, ct.points
 		FROM round_bonus_tasks b JOIN rounds r ON r.id = b.round_id JOIN tournaments t ON t.id = r.tournament_id
 		JOIN catalog_tasks ct ON ct.id = b.task_id
 		WHERE `+scope+`
@@ -221,10 +221,10 @@ func (s *Store) loadChanceHistory(ctx context.Context) ([]chanceMatchRec, error)
 		return nil, err
 	}
 	for rows.Next() {
-		var rid, owner, doneBy, category string
+		var rid, owner, doneBy, oppBy, category string
 		var onMap bool
 		var points int
-		if err := rows.Scan(&rid, &owner, &doneBy, &category, &onMap, &points); err != nil {
+		if err := rows.Scan(&rid, &owner, &doneBy, &oppBy, &category, &onMap, &points); err != nil {
 			rows.Close()
 			return nil, err
 		}
@@ -238,7 +238,8 @@ func (s *Store) loadChanceHistory(ctx context.Context) ([]chanceMatchRec, error)
 		rd.Raids[so.side].Tasks = append(rd.Raids[so.side].Tasks, chanceTaskRec{Kind: chanceTaskKind(category, onMap), Done: done})
 		if done {
 			rd.Raids[so.side].Points += points
-		} else if sd, ok := sides[doneBy]; ok && sd.match == ref.match {
+		}
+		if sd, ok := sides[oppBy]; ok && sd.match == ref.match {
 			rd.Raids[sd.side].Points += ContractCrossPoints
 		}
 		recs[ref.match].Detailed = true

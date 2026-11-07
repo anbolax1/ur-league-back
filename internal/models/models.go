@@ -962,7 +962,8 @@ type RoundBonusTask struct {
 	Points        int     `json:"points"`
 	ValueType     string  `json:"valueType"`
 	Times         int     `json:"times"`                 // legacy-счётчик (не используется в скоринге контрактов)
-	CompletedBy   *string `json:"completedBy,omitempty"` // кто выполнил: владелец - очки задания, противник - +1, nil - не выполнено
+	CompletedBy   *string `json:"completedBy,omitempty"` // владелец, если он выполнил (очки задания), иначе соперник, иначе nil
+	OpponentBy    *string `json:"opponentBy,omitempty"`  // сторона, засчитавшая задание соперника (+1); владелец при этом тоже мог его выполнить
 	Name          string  `json:"name,omitempty"`
 	Category      string  `json:"category"`          // task | protocol
 	Tag           string  `json:"tag"`               // тег задания из каталога

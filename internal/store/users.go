@@ -214,9 +214,9 @@ func (s *Store) PlayerAggregate(ctx context.Context, userID string) (models.Play
 	if err := s.Pool.QueryRow(ctx, `
 		SELECT (COUNT(*) FILTER (WHERE participant_id = ANY($1)))::int,
 		       (COUNT(*) FILTER (WHERE participant_id = ANY($1) AND completed_by = participant_id))::int,
-		       (COUNT(*) FILTER (WHERE completed_by = ANY($1) AND completed_by <> participant_id))::int,
+		       (COUNT(*) FILTER (WHERE opponent_by = ANY($1)))::int,
 		       (SELECT COUNT(*) FROM legendary_contract_completions WHERE participant_id = ANY($1))::int
-		FROM round_bonus_tasks WHERE participant_id = ANY($1) OR completed_by = ANY($1)`, pids).
+		FROM round_bonus_tasks WHERE participant_id = ANY($1) OR opponent_by = ANY($1)`, pids).
 		Scan(&st.TasksOffered, &st.TasksDone, &st.TasksCross, &st.Legendaries); err != nil {
 		return st, err
 	}

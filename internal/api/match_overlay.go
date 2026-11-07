@@ -41,6 +41,12 @@ func (s *Server) storedLiveState(ctx context.Context) models.LiveState {
 	return stored
 }
 
+// overlayShows - показывает ли оверлей этот матч.
+func (s *Server) overlayShows(ctx context.Context, tournamentID string) bool {
+	stored := s.storedLiveState(ctx)
+	return stored.TournamentID != nil && *stored.TournamentID == tournamentID
+}
+
 // storeHeatSide запоминает сторону, чей заход идёт; оверлей и пульт возьмут её при следующей публикации матча.
 func (s *Server) storeHeatSide(ctx context.Context, tournamentID, participantID string) {
 	stored := s.storedLiveState(ctx)
@@ -306,7 +312,7 @@ func buildMatchLiveState(st models.MatchState, stored models.LiveState) models.L
 		} else {
 			b.Points = 1
 			b.Opponent = true
-			if task.CompletedBy != nil && *task.CompletedBy == focus.ID {
+			if task.OpponentBy != nil && *task.OpponentBy == focus.ID {
 				b.Times = 1
 			}
 		}

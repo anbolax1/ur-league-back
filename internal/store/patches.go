@@ -594,9 +594,13 @@ func (s *Store) loadPatchInput(ctx context.Context, sn models.Season, prev *mode
 		JOIN LATERAL (
 			SELECT re.participant_id AS pid, re.points AS pts FROM round_entries re WHERE re.round_id = r.id
 			UNION ALL
-			SELECT rbt.completed_by, CASE WHEN rbt.completed_by = rbt.participant_id THEN ct.points ELSE $2::int END
+			SELECT rbt.completed_by, ct.points
 			FROM round_bonus_tasks rbt JOIN catalog_tasks ct ON ct.id = rbt.task_id
-			WHERE rbt.round_id = r.id AND rbt.completed_by IS NOT NULL
+			WHERE rbt.round_id = r.id AND rbt.completed_by = rbt.participant_id
+			UNION ALL
+			SELECT rbt.opponent_by, $2::int
+			FROM round_bonus_tasks rbt
+			WHERE rbt.round_id = r.id AND rbt.opponent_by IS NOT NULL
 			UNION ALL
 			SELECT lcc.participant_id, lc.points
 			FROM legendary_contract_completions lcc
