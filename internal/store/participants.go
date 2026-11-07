@@ -15,6 +15,9 @@ var ErrNotFound = errors.New("запись не найдена")
 // ErrConflict — нарушение бизнес-правила (напр. задание уже выдано в этом матче).
 var ErrConflict = errors.New("конфликт")
 
+// ErrOpponentTaskLimit - сопернику уже засчитано другое задание этой стороны в раунде.
+var ErrOpponentTaskLimit = errors.New("соперник уже засчитал другое задание")
+
 const participantCols = `id, tournament_id, kind, user_id, name, seed, total_points, members`
 
 func scanParticipant(row pgx.Row) (models.Participant, error) {

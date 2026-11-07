@@ -112,6 +112,17 @@ func (s *Store) MarkTask(ctx context.Context, id, by string) (MarkResult, error)
 		if err != nil {
 			return res, err
 		}
+		// Оверлей показывает одну отметку «Чужое», поэтому соперник засчитывает за раунд одно задание стороны.
+		var other int
+		if err := s.Pool.QueryRow(ctx, `
+			SELECT COUNT(*) FROM round_bonus_tasks
+			WHERE round_id = $1 AND participant_id = $2 AND opponent_by IS NOT NULL AND id <> $3`,
+			res.RoundID, res.Owner, id).Scan(&other); err != nil {
+			return res, err
+		}
+		if other > 0 {
+			return res, ErrOpponentTaskLimit
+		}
 		oppBy = &opp
 	case "opponent_off":
 		oppBy = nil

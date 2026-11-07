@@ -696,6 +696,10 @@ func (s *Server) handleMarkTask(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	res, err := s.Store.MarkTask(r.Context(), asgID, b.By)
+	if errors.Is(err, store.ErrOpponentTaskLimit) {
+		writeError(w, http.StatusConflict, "соперник уже засчитал другое задание этой стороны в раунде")
+		return
+	}
 	if errors.Is(err, store.ErrConflict) {
 		writeError(w, http.StatusConflict, "протокол сопернику не засчитать")
 		return
